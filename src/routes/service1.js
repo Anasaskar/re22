@@ -295,4 +295,93 @@ router.get('/job/:jobId', async (req, res) => {
   }
 });
 
+// ── Step 2: GFPGAN Face & Detail Enhancement ──────────────────────────────
+// POST /api/service1/enhance/:jobId
+// Body JSON: { images: [ { esrganUrl, index } ] }
+router.post('/enhance/:jobId', express.json(), async (req, res) => {
+  const { jobId } = req.params;
+  const jobDir = path.join(OUTPUTS_DIR, jobId);
+
+  if (!fs.existsSync(jobDir))
+    return res.status(404).json({ error: 'Job not found — invalid jobId' });
+
+  // Accept list of esrgan output URLs from frontend
+  const imagesToEnhance = req.body && req.body.images;
+  if (!imagesToEnhance || !imagesToEnhance.length)
+    return res.status(400).json({ error: 'No images provided' });
+
+  try {
+    const results = [];
+
+    for (const [i, item] of imagesToEnhance.entries()) {
+      const idx     = item.index !== undefined ? item.index : i;
+      const esrUrl  = item.esrganUrl; // full URL like /outputs/jobId/image_01_restored.png
+
+      console.log(`[S1-GFPGAN] Processing image ${idx+1}: ${esrUrl}`);
+
+      // Resolve local path from relative URL
+      const localPath = path.join(__dirname, '../../public', esrUrl);
+
+      // Convert local file → data URL for GFPGAN
+      let inputDataUrl;
+      if (fs.existsSync(localPath)) {
+        const buf = await toPngBuffer(localPath);
+        inputDataUrl = toDataURL(buf);
+        console.log(`[S1-GFPGAN] Local file loaded (${(buf.length/1024).toFixed(0)} KB)`);
+      } else {
+        // Fallback: pass the full URL if local file not found
+        const host = `http://localhost:${process.env.PORT || 3000}`;
+        inputDataUrl = `${host}${esrUrl}`;
+        console.log(`[S1-GFPGAN] Using URL fallback: ${inputDataUrl}`);
+      }
+
+      // Call GFPGAN
+      console.log(`[S1-GFPGAN] Calling tencentarc/gfpgan...`);
+      let gfpganUrl;
+      try {
+        const output = await replicate.run(
+          'tencentarc/gfpgan:0fbacf7afc6c144e5be9767cff80f25aff23e52b0708f21516c',
+          { input: { img: inputDataUrl, version: '1.4', scale: 2 } }
+        );
+        gfpganUrl = String(output);
+        console.log(`[S1-GFPGAN] Output: ${gfpganUrl.substring(0, 80)}`);
+        if (!gfpganUrl.startsWith('http')) throw new Error(`Unexpected GFPGAN output: ${gfpganUrl.substring(0,60)}`);
+      } catch (e) {
+        console.error(`[S1-GFPGAN] Error:`, e.message);
+        throw new Error(`GFPGAN error: ${e.message}`);
+      }
+
+      // Download and save GFPGAN output
+      const baseName  = `image_${String(idx+1).padStart(2,'0')}`;
+      const gfpPng    = path.join(jobDir, `${baseName}_gfpgan.png`);
+      const gfpJpg    = path.join(jobDir, `${baseName}_gfpgan.jpg`);
+      const gfpTiff   = path.join(jobDir, `${baseName}_gfpgan.tiff`);
+
+      await downloadFile(gfpganUrl, gfpPng);
+      await sharp(gfpPng).jpeg({ quality: 95 }).toFile(gfpJpg);
+      await sharp(gfpPng).tiff({ compression: 'lzw' }).toFile(gfpTiff);
+
+      const relUrl = p => `/outputs/${jobId}/${path.basename(p)}`;
+      results.push({
+        index:      idx,
+        esrganUrl:  esrUrl,           // before (ESRGAN output)
+        gfpganUrl:  relUrl(gfpPng),   // after  (GFPGAN output)
+        outputs: [
+          { label: `صورة ${idx+1} — PNG (GFPGAN)`,        url: relUrl(gfpPng),  ext: 'png'  },
+          { label: `صورة ${idx+1} — JPG (GFPGAN)`,        url: relUrl(gfpJpg),  ext: 'jpg'  },
+          { label: `صورة ${idx+1} — TIFF (GFPGAN)`,       url: relUrl(gfpTiff), ext: 'tiff' },
+        ],
+      });
+      console.log(`[S1-GFPGAN] Image ${idx+1} done.`);
+    }
+
+    return res.json({ success: true, jobId, results });
+
+  } catch (err) {
+    console.error('[S1-GFPGAN] Fatal error:', err);
+    return res.status(500).json({ error: err.message || 'GFPGAN processing failed' });
+  }
+});
+
 module.exports = router;
+

@@ -179,6 +179,53 @@ select.field-input option{background:#102033}
           <div id="s1-downloads" class="flex flex-wrap gap-2"></div>
         </div>
 
+        <!-- Step 2: GFPGAN -->
+        <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 relative overflow-hidden">
+          <!-- Step badge -->
+          <div class="absolute top-0 right-0 w-28 h-28 bg-[#c084fc]/5 rounded-full blur-2xl pointer-events-none"></div>
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-7 h-7 rounded-lg bg-[#c084fc]/15 border border-[#c084fc]/30 flex items-center justify-center text-[#c084fc] text-xs font-black">2</div>
+            <div>
+              <p class="text-white font-bold text-sm">الخطوة الثانية: تحسين الوجوه والتفاصيل</p>
+              <p class="text-textMuted text-xs">GFPGAN — يعمل على مخرجات Real-ESRGAN لاستعادة الوجوه والتفاصيل المعمارية الدقيقة</p>
+            </div>
+          </div>
+          <!-- Step 2 prompt button -->
+          <div id="s1-gfp-prompt">
+            <div class="flex flex-wrap gap-2 text-xs text-textMuted mb-4">
+              <span class="px-2.5 py-1 rounded-lg bg-[#c084fc]/10 border border-[#c084fc]/20 text-[#c084fc] font-bold">✦ استعادة الوجوه</span>
+              <span class="px-2.5 py-1 rounded-lg bg-[#c084fc]/10 border border-[#c084fc]/20 text-[#c084fc] font-bold">✦ تحسين التفاصيل</span>
+              <span class="px-2.5 py-1 rounded-lg bg-[#c084fc]/10 border border-[#c084fc]/20 text-[#c084fc] font-bold">✦ إزالة التشوهات</span>
+            </div>
+            <button onclick="s1_applyGfpgan()" class="w-full bg-gradient-to-l from-[#c084fc]/20 to-[#c084fc]/5 border border-[#c084fc]/40 text-[#c084fc] hover:from-[#c084fc] hover:to-[#a855f7] hover:text-white font-extrabold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-all group">
+              <i data-lucide="sparkles" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
+              تطبيق GFPGAN على النتائج
+            </button>
+          </div>
+          <!-- Step 2 processing -->
+          <div id="s1-gfp-processing" class="hidden flex-col items-center gap-3 py-4">
+            <div class="w-8 h-8 border-2 border-[#c084fc]/20 border-t-[#c084fc] rounded-full animate-spin"></div>
+            <p class="text-white font-bold text-sm">جارٍ تطبيق GFPGAN...</p>
+            <p class="text-textMuted text-xs">استعادة الوجوه والتفاصيل الدقيقة باستخدام GFPGAN v1.4</p>
+          </div>
+          <!-- Step 2 error -->
+          <div id="s1-gfp-error" class="hidden mt-3 px-4 py-3 bg-red-900/20 border border-red-500/30 rounded-xl">
+            <p class="text-red-300 text-xs font-bold" id="s1-gfp-error-msg"></p>
+          </div>
+          <!-- Step 2 results -->
+          <div id="s1-gfp-results" class="hidden mt-4 space-y-4">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-2 h-2 rounded-full bg-[#c084fc] shadow-[0_0_8px_#c084fc]"></div>
+              <span class="text-white font-bold text-sm">اكتملت معالجة GFPGAN بنجاح</span>
+            </div>
+            <div id="s1-gfp-comparisons" class="space-y-3"></div>
+            <div>
+              <p class="text-[#c084fc] font-bold text-xs mb-2">تحميل مخرجات GFPGAN</p>
+              <div id="s1-gfp-downloads" class="flex flex-wrap gap-2"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Reset -->
         <button onclick="s1_reset()" class="w-full bg-panelInner border border-panelBorder text-textMuted font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:text-white hover:border-accent/30 transition-all">
           <i data-lucide="rotate-ccw" class="w-4 h-4"></i> ترميم صور جديدة
@@ -186,6 +233,7 @@ select.field-input option{background:#102033}
       </div>
 
     </div>
+
 
     <!-- S2: Architectural Rehabilitation -->
     <div id="panel-s2" class="panel max-w-3xl mx-auto">
@@ -480,6 +528,11 @@ async function s1_submit(){
 
 function s1_showResults(data, fileNames){
   fileNames = fileNames || [];
+  // Store for Step 2 (GFPGAN)
+  window._s1JobId = data.jobId;
+  window._s1EsrganImages = data.images;
+  window._s1ClientFileNames = fileNames;
+
   const proc = document.getElementById('s1-processing');
   proc.classList.add('hidden');
   proc.classList.remove('flex');
@@ -547,7 +600,101 @@ function s1_reset(){
   document.getElementById('files-s1').innerHTML = '';
   document.getElementById('files-s1').classList.add('hidden');
   document.getElementById('s1-progress-bar').style.width = '5%';
+  // Reset GFPGAN step 2
+  document.getElementById('s1-gfp-prompt').classList.remove('hidden');
+  document.getElementById('s1-gfp-processing').classList.add('hidden');
+  document.getElementById('s1-gfp-error').classList.add('hidden');
+  document.getElementById('s1-gfp-results').classList.add('hidden');
+  window._s1JobId = null;
+  window._s1EsrganImages = null;
 }
+
+// ── Step 2: GFPGAN ────────────────────────────────────────────────────────
+async function s1_applyGfpgan(){
+  if(!window._s1JobId || !window._s1EsrganImages) {
+    alert('يرجى تشغيل الخطوة الأولى (Real-ESRGAN) أولاً.');
+    return;
+  }
+
+  // UI state: hide prompt, show spinner
+  document.getElementById('s1-gfp-prompt').classList.add('hidden');
+  document.getElementById('s1-gfp-error').classList.add('hidden');
+  document.getElementById('s1-gfp-results').classList.add('hidden');
+  const gfpProc = document.getElementById('s1-gfp-processing');
+  gfpProc.classList.remove('hidden');
+  gfpProc.classList.add('flex');
+
+  try {
+    const payload = {
+      images: window._s1EsrganImages.map((img, i) => ({
+        index: i,
+        esrganUrl: img.outputUrl,
+      })),
+    };
+
+    const res = await fetch(`/api/service1/enhance/${window._s1JobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'GFPGAN failed');
+
+    // Hide spinner, show results
+    gfpProc.classList.add('hidden');
+    gfpProc.classList.remove('flex');
+
+    const gfpResults = document.getElementById('s1-gfp-results');
+    gfpResults.classList.remove('hidden');
+
+    // Before(ESRGAN) vs After(GFPGAN) comparisons
+    const compContainer = document.getElementById('s1-gfp-comparisons');
+    compContainer.innerHTML = '';
+    const fileNames = window._s1ClientFileNames || [];
+    for (const r of data.results) {
+      const displayName = fileNames[r.index] || `صورة ${r.index+1}`;
+      const card = document.createElement('div');
+      card.className = 'bg-bgDark rounded-xl border border-panelBorder p-3';
+      card.innerHTML = `
+        <p class="text-white font-bold text-xs mb-2 truncate" title="${displayName}">📷 ${displayName}</p>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <p class="text-textMuted text-[10px] font-bold mb-1 text-center">Real-ESRGAN ×4</p>
+            <img src="${r.esrganUrl}" class="compare-img" alt="esrgan">
+          </div>
+          <div>
+            <p class="text-[#c084fc] text-[10px] font-bold mb-1 text-center">GFPGAN v1.4</p>
+            <img src="${r.gfpganUrl}" class="compare-img" alt="gfpgan">
+          </div>
+        </div>`;
+      compContainer.appendChild(card);
+    }
+
+    // GFPGAN download buttons
+    const dlContainer = document.getElementById('s1-gfp-downloads');
+    dlContainer.innerHTML = '';
+    for (const r of data.results) {
+      for (const f of r.outputs) {
+        const a = document.createElement('a');
+        a.href = f.url; a.download = '';
+        a.className = 'dl-btn';
+        a.style.borderColor = 'rgba(192,132,252,0.4)';
+        a.style.color = '#c084fc';
+        a.innerHTML = `<span>${f.ext === 'png' ? '🖼' : f.ext === 'jpg' ? '🖼' : '🖨'}</span><span>${f.label}</span>`;
+        dlContainer.appendChild(a);
+      }
+    }
+    lucide.createIcons();
+
+  } catch(err) {
+    gfpProc.classList.add('hidden');
+    gfpProc.classList.remove('flex');
+    document.getElementById('s1-gfp-prompt').classList.remove('hidden');
+    document.getElementById('s1-gfp-error').classList.remove('hidden');
+    document.getElementById('s1-gfp-error-msg').textContent = err.message;
+  }
+}
+
 
 lucide.createIcons();
 </script>

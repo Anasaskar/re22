@@ -340,7 +340,7 @@ router.post('/enhance/:jobId', express.json(), async (req, res) => {
       let gfpganUrl;
       try {
         const output = await replicate.run(
-          'tencentarc/gfpgan:0fbacf7afc6c144e5be9767cff80f25aff23e52b0708f21516c',
+          'tencentarc/gfpgan:0fbacf7afc6c144e5be9767cff80f25aff23e52b0708f17e20f9879b2f21516c',
           { input: { img: inputDataUrl, version: '1.4', scale: 2 } }
         );
         gfpganUrl = String(output);

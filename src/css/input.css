@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gold-400: #dfb867;
+  --color-gold-500: #dcae4f;
+  --color-gold-600: #c9a24d;
+  --color-gold-700: #b48d3e;
+  --color-base-dark: #0b1521;
+  --color-base-light: #122235;
+  --color-base-card: #142640;
+}
+
+@layer base {
+  body {
+    font-family: 'Cairo', sans-serif;
+    background-color: var(--color-base-dark);
+  }
+}
+
+@layer utilities {
+  .bg-grid {
+    background-size: 50px 50px;
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .glass-box {
+    background: rgba(18, 34, 53, 0.45);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+}

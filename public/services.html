@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>خدماتنا - منصة التراث العمراني</title>
+    <!-- Use the compiled SPA CSS -->
+    <link href="/css/style.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+</head>
+
+<body class="min-h-screen text-white relative overflow-x-hidden flex flex-col bg-grid">
+
+    <!-- Faint Architectural Background Elements (Global) -->
+    <div
+        class="fixed left-6 top-0 bottom-0 w-8 flex flex-col items-center justify-evenly opacity-[0.04] pointer-events-none z-0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l8 4v10l-8 6-8-6V6l8-4z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 22V12M12 12L4 6M12 12l8-6" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M4 22h16M4 22V8l8-6 8 6v14m-9-3v-5h2v5m-6-5h1m12 0h-1M6 10h1m10 0h1" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M3 21h18M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16M9 9h6M9 14h6M9 19h6" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v20M8 5h8M6 9h12M4 13h16M2 17h20" />
+        </svg>
+    </div>
+
+    <!-- Right side background decors -->
+    <div
+        class="fixed right-6 top-0 bottom-0 w-8 flex flex-col items-center justify-evenly opacity-[0.04] pointer-events-none z-0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M3 21h18M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16M9 9h6M9 14h6M9 19h6" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v20M8 5h8M6 9h12M4 13h16M2 17h20" />
+        </svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-8 h-8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l8 4v10l-8 6-8-6V6l8-4z" />
+        </svg>
+    </div>
+
+    <!-- Sticky Navbar -->
+    <nav class="fixed top-8 left-0 right-0 z-50 flex justify-center flex-none">
+        <div
+            class="bg-[#122235]/80 border border-white/10 backdrop-blur-md rounded-[18px] px-10 py-3.5 flex items-center shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
+            <div class="flex items-center gap-8 text-[14px]">
+                <a href="/index.html" class="text-white/60 hover:text-white transition font-semibold group relative">
+                    الرئيسية
+                    <span
+                        class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-[2px] bg-white rounded-full transition-all group-hover:w-4"></span>
+                </a>
+                <a href="/services.html" class="text-white hover:text-white transition font-bold group relative">
+                    خدماتنا
+                    <span
+                        class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-[2px] bg-white rounded-full transition-all"></span>
+                </a>
+                <a href="/index.html#vision"
+                    class="text-white/60 hover:text-white transition font-semibold group relative">
+                    الرؤية والرسالة
+                </a>
+                <a href="/index.html#goals"
+                    class="text-white/60 hover:text-white transition font-semibold group relative">
+                    أهدافنا
+                </a>
+                <a href="/index.html#about"
+                    class="text-white/60 hover:text-white transition font-semibold group relative">
+                    عن المنصة
+                </a>
+                <a href="/index.html#story"
+                    class="text-white/60 hover:text-white transition font-semibold group relative">
+                    قصتنا
+                </a>
+                <a href="#" class="text-white/60 hover:text-white transition font-semibold">تواصل معنا</a>
+
+                <div class="w-px h-5 bg-white/10 mx-2"></div>
+
+                <a href="/login.html" class="text-[#dfb867] hover:text-[#f8d07a] transition font-bold">تسجيل الدخول</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- MAIN SERVICES SECTION -->
+    <div
+        class="max-w-[1400px] w-full mx-auto px-6 flex-grow flex flex-col relative z-10 pt-40 pb-20 justify-center min-h-screen">
+
+        <div class="flex flex-col items-center justify-center gap-4 mb-20 text-center">
+            <!-- Golden Pill Badge -->
+            <div
+                class="bg-[#c9a24d] text-[#0b1521] px-6 py-1.5 rounded-md text-[16px] font-bold mb-2 shadow-[0_5px_15px_rgba(201,162,77,0.25)]">
+                خدماتنا
+            </div>
+
+            <!-- Title -->
+            <h1 class="text-[38px] md:text-[44px] font-black text-white mt-1">
+                منظومة خدمات رُؤى المتكاملة
+            </h1>
+
+            <!-- Subtitle -->
+            <p class="text-[16px] text-white/70 font-medium">
+                تغطي رُؤى دورة التأهيل الكاملة من التحليل البصري حتى المخرجات الأكاديمية والنماذج ثلاثية الأبعاد
+            </p>
+        </div>
+
+        <!-- Cards Layout -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 w-full">
+
+            <!-- Card 1 (Right): Visual Intelligence -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    1
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">منظومة خدمات رؤى المتكاملة</h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Visual Intelligence
+                        Restoration</p>
+
+                    <p class="text-[14px] text-white/80 font-medium leading-[2.2] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        تحليل الصور التاريخية والأثرية للمنشآت التراثية واستعادة تفاصيلها البصرية الدقيقة باستخدام
+                        محركات الذكاء الاصطناعي المتخصصة في التعرف على الأنماط المعمارية التراثية وعناصرها الإنشائية
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-10">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ تحليل الصور ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ استعادة التفاصيل ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ التوثيق البصري ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2 (Middle): Architectural Revitalization -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    2
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">التصور المعماري التأهيلي</h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Architectural
+                        Rehabilitation Visualization</p>
+
+                    <p class="text-[14px] text-white/80 font-medium leading-[2.2] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        توليد تصورات معمارية تأهيلية للمنشآت التراثية بناءً على الوظيفة المستهدفة التي يحددها الباحث
+                        (متحف، مركز زوار، مسكن، معرض، إلخ)، مع الالتزام بالنمط المعماري التراثي الأصيل للمنطقة ومرونة في
+                        التكيّف مع متطلبات الاستخدام المعاصر
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-10">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ التصور المعماري ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ إعادة التأهيل ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ الهوية المعمارية ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 3 (Left): Geospatial Analysis -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    3
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">التحليل الجغرافي المكاني واستعادة النسيج العمراني
+                    </h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Geospatial Analysis &
+                        Urban Fabric Restoration</p>
+
+                    <p class="text-[13px] text-white/80 font-medium leading-[2.1] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        ربط البيانات الجغرافية الحقيقية للموقع (إحداثيات، تضاريس، ارتفاعات) مع محركات الذكاء الاصطناعي
+                        لضمان تطابق التصورات مع الواقع الفعلي للموقع. تعتمد هذه الخدمة على أقدم الصور الجوية والمخططات
+                        التاريخية المتاحة لاسترداد التخطيط العمراني الأصيل للحي (شبكة الشوارع، الفراغات، المحاور
+                        البصرية) وتوليد مخطط مستقبلي يحافظ على النسيج العمراني الأصيل ويدعم استخدامه الثقافي والسياحي
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-6">
+                        <div class="flex items-center justify-center gap-2 w-full">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ التضاريس ]</span>
+                            <span class="text-[14px] font-bold text-[#dfb867] ml-2">[ GIS ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ النسيج العمراني ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ الاستعادة التاريخية ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 4 (Right): Automated Academic Reporting -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    4
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">التقارير الأكاديمية التلقائية</h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Automated Academic
+                        Reporting</p>
+
+                    <p class="text-[14px] text-white/80 font-medium leading-[2.2] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        توليد تقارير أكاديمية متخصصة مرتبطة مباشرة بالتصورات والبيانات الجغرافية لكل منشأة، تشمل : تحليل
+                        الموقع، خطة التأهيل، متطلبات الاستدامة، والمطابقة مع المعايير الدولية (اليونسكو) والمحلية بأسلوب
+                        أكاديمي موثوق، (هيئة التراث) يصلح للتضمين في أطروحات الدكتوراه ووثائق التقديم الرسمية
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-10">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ تقارير علمية ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ معايير اليونسكو ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ هيئة التراث ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 5 (Middle): Comprehensive 3D Modeling -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    5
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">النمذجة ثلاثية الأبعاد الشاملة</h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Comprehensive 3D
+                        Modeling</p>
+
+                    <p class="text-[14px] text-white/80 font-medium leading-[2.2] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        تحويل جميع التصورات المعمارية إلى نماذج ثلاثية الأبعاد متكاملة تجمع كافة منشآت النطاق التراثي في
+                        نسيج عمراني واحد متماسك (Master Plan Module). تُنتج النماذج بصيغ قابلة للطباعة ثلاثية الأبعاد مع
+                        ضمان السماكة الإنشائية (STL/OBJ) المناسبة، وملفات تصدير للعرض المعماري وتصور بانورامي كامل
+                        (GLB/FBX) المهني للمنطقة التراثية بعد التأهيل.
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-10">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ Master Plan ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ 3D Model ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ طباعة ثلاثية الأبعاد ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 6 (Left): Documentation & Media Outputs -->
+            <div
+                class="bg-gradient-to-b from-[#1c3554]/90 to-[#102033]/90 backdrop-blur-md rounded-[24px] border border-white/5 p-8 flex flex-col items-center text-center shadow-[0_20px_40px_rgba(0,0,0,0.6)] relative overflow-hidden group hover:-translate-y-2 transition-transform duration-300">
+                <!-- Large Number Watermark -->
+                <div
+                    class="absolute bottom-[-10px] left-1/2 -translate-x-1/2 text-[200px] font-black text-white/[0.03] select-none pointer-events-none leading-none z-0 font-sans group-hover:text-white/[0.05] transition-colors duration-300">
+                    6
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center w-full h-full">
+                    <h3 class="text-[22px] font-bold text-white mb-1">المخرجات التوثيقية والإعلامية</h3>
+                    <p class="text-[12px] text-white/50 font-bold mb-6 uppercase tracking-wider">Documentation & Media
+                        Outputs</p>
+
+                    <p class="text-[14px] text-white/80 font-medium leading-[2.2] mb-auto text-justify"
+                        style="text-align-last: center;">
+                        توليد مخرجات توثيقية احترافية تجمع وصف المشروع الكامل مع تصورات المنشآت ثنائية وثلاثية الأبعاد
+                        في قالب موحد ومتكامل. تشمل وثيقة تأهيل شاملة بضغطة زر واحدة تجمع كل المنشآت، ومحتوى توثيقي مفصّل
+                        لكل منشأة يتضمن الوصف المعماري والتصورات البصرية بما يصلح للعرض الأكاديمي والتقديم لصانعي
+                        القرار.
+                    </p>
+
+                    <div class="flex flex-col items-center justify-center gap-3 w-full mt-10">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ Dossier ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ التوثيق ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[14px] font-bold text-[#dfb867]">[ المخرجات الأكاديمية ]</span>
+                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                    d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+
+</html>

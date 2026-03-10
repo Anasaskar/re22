@@ -14,9 +14,15 @@
   "description": "",
   "dependencies": {
     "cors": "^2.8.6",
+    "docx": "^9.6.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "mongoose": "^9.2.2"
+    "mongoose": "^9.2.2",
+    "multer": "^2.1.1",
+    "pdfkit": "^0.17.2",
+    "replicate": "^1.4.0",
+    "sharp": "^0.34.5",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.1",

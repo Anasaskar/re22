@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>لوحة التحكم - منصة التراث العمراني</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Cairo','sans-serif']},colors:{bgDark:'#0b1521',panelDark:'#102033',panelInner:'#1c3554',panelBorder:'#2a4a73',accent:'#dfb867',textMuted:'#94a3b8'}}}}
+</script>
+<style>
+body{background:#0b1521;color:#fff;font-family:'Cairo',sans-serif;margin:0;padding:0}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#2a4a73;border-radius:4px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:16px;color:#94a3b8;font-weight:600;font-size:15px;transition:all .2s;cursor:pointer;border:1px solid transparent;text-decoration:none}
+.nav-item:hover{background:rgba(42,74,115,0.4);color:#fff}
+.nav-item.active{background:rgba(223,184,103,0.12);color:#dfb867;border-color:rgba(223,184,103,0.2)}
+.panel{display:none}.panel.active{display:flex;flex-direction:column;gap:20px}
+.upload-zone{border:2px dashed rgba(42,74,115,0.8);border-radius:16px;padding:40px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(11,21,33,0.5);transition:all .3s;cursor:pointer;position:relative}
+.upload-zone:hover{border-color:rgba(223,184,103,0.4);background:rgba(223,184,103,0.03)}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.tag{display:inline-block;background:rgba(42,74,115,0.4);border:1px solid rgba(42,74,115,0.8);border-radius:8px;padding:4px 10px;font-size:11px;color:#94a3b8;font-weight:700;font-family:monospace}
+.field-label{font-size:13px;color:#94a3b8;font-weight:700;margin-bottom:6px;display:block}
+.field-input{width:100%;background:rgba(11,21,33,0.5);border:1px solid #2a4a73;border-radius:12px;padding:10px 14px;color:#fff;font-family:'Cairo',sans-serif;font-size:14px;outline:none;transition:border-color .2s}
+.field-input:focus{border-color:rgba(223,184,103,0.4)}
+select.field-input option{background:#102033}
+/* S1 specific */
+.spinner{width:36px;height:36px;border:3px solid rgba(223,184,103,0.2);border-top-color:#dfb867;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.compare-img{width:100%;height:180px;object-fit:cover;border-radius:10px;background:#0b1521}
+.dl-btn{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:10px;border:1px solid #2a4a73;background:rgba(28,53,84,0.6);color:#94a3b8;font-size:12px;font-weight:700;text-decoration:none;transition:all .2s;cursor:pointer}
+.dl-btn:hover{border-color:rgba(223,184,103,0.5);color:#dfb867;background:rgba(223,184,103,0.05)}
+.dl-btn.primary{border-color:rgba(223,184,103,0.4);background:rgba(223,184,103,0.08);color:#dfb867}
+</style>
+</head>
+<body class="flex h-screen overflow-hidden text-sm">
+
+<!-- Sidebar -->
+<aside class="w-[270px] bg-bgDark border-l border-panelBorder flex flex-col h-full flex-shrink-0 z-10 shadow-2xl">
+  <div class="h-20 flex items-center px-6 border-b border-panelBorder/50">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-accent flex items-center justify-center text-[#0b1521]">
+        <i data-lucide="layers" class="w-5 h-5 stroke-[2.5]"></i>
+      </div>
+      <span class="text-xl font-black text-white">رُؤى</span>
+    </div>
+  </div>
+
+  <nav class="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
+    <a class="nav-item active" data-panel="s1" onclick="switchPanel('s1',this)">
+      <i data-lucide="sparkles" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">الذكاء البصري</div><div class="text-[10px] opacity-60 font-normal">Visual Intelligence Restoration</div></div>
+    </a>
+    <a class="nav-item" data-panel="s2" onclick="switchPanel('s2',this)">
+      <i data-lucide="building-2" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">التصور المعماري</div><div class="text-[10px] opacity-60 font-normal">Architectural Rehabilitation</div></div>
+    </a>
+    <a class="nav-item" data-panel="s3" onclick="switchPanel('s3',this)">
+      <i data-lucide="map" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">التحليل الجغرافي</div><div class="text-[10px] opacity-60 font-normal">Geospatial Analysis</div></div>
+    </a>
+    <a class="nav-item" data-panel="s4" onclick="switchPanel('s4',this)">
+      <i data-lucide="file-check-2" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">التقارير الأكاديمية</div><div class="text-[10px] opacity-60 font-normal">Automated Academic Reporting</div></div>
+    </a>
+    <a class="nav-item" data-panel="s5" onclick="switchPanel('s5',this)">
+      <i data-lucide="box" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">النمذجة ثلاثية الأبعاد</div><div class="text-[10px] opacity-60 font-normal">Comprehensive 3D Modeling</div></div>
+    </a>
+    <a class="nav-item" data-panel="s6" onclick="switchPanel('s6',this)">
+      <i data-lucide="folder-output" class="w-5 h-5 flex-shrink-0"></i>
+      <div><div class="text-[13px]">المخرجات التوثيقية</div><div class="text-[10px] opacity-60 font-normal">Documentation & Media Outputs</div></div>
+    </a>
+  </nav>
+
+  <div class="p-4 border-t border-panelBorder/50">
+    <div class="flex items-center gap-3 px-3 py-3 rounded-2xl bg-panelDark border border-panelBorder cursor-pointer hover:border-accent/30 transition-colors group">
+      <div class="w-8 h-8 rounded-full bg-panelBorder bg-[url('https://i.pravatar.cc/100')] bg-cover"></div>
+      <div class="flex-1"><div class="text-sm font-bold text-white group-hover:text-accent transition-colors">حسابي</div><div class="text-[11px] text-textMuted">باحث تراثي</div></div>
+      <i data-lucide="chevron-up" class="w-4 h-4 text-textMuted"></i>
+    </div>
+  </div>
+</aside>
+
+<!-- Main -->
+<main class="flex-1 flex flex-col h-full overflow-hidden bg-bgDark">
+
+  <!-- Header -->
+  <header class="h-20 px-8 flex items-center justify-between border-b border-panelBorder/50 flex-shrink-0">
+    <div class="flex items-center gap-4">
+      <div id="hdr-icon" class="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent">
+        <i data-lucide="sparkles" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h1 id="hdr-title" class="text-lg font-bold text-white">الترميم البصري الذكي</h1>
+        <p id="hdr-sub" class="text-textMuted text-xs mt-0.5">Service 01: Visual Intelligence Restoration</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="px-3 py-1.5 rounded-xl bg-accent/10 text-accent text-xs font-bold flex items-center gap-1.5 border border-accent/20"><i data-lucide="zap" class="w-3 h-3"></i> نتائج فورية</span>
+      <span class="px-3 py-1.5 rounded-xl bg-[#38bdf8]/10 text-[#38bdf8] text-xs font-bold flex items-center gap-1.5 border border-[#38bdf8]/20"><i data-lucide="star" class="w-3 h-3"></i> دقة عالية</span>
+      <span class="px-3 py-1.5 rounded-xl bg-[#c084fc]/10 text-[#c084fc] text-xs font-bold flex items-center gap-1.5 border border-[#c084fc]/20"><i data-lucide="layers" class="w-3 h-3"></i> أنماط متعددة</span>
+      <div class="bg-panelDark border border-panelBorder rounded-xl px-4 py-2 flex items-center gap-2.5 hover:border-accent/30 transition-colors cursor-pointer">
+        <div class="w-2 h-2 rounded-full bg-accent shadow-[0_0_8px_#dfb867]"></div>
+        <div><div class="text-[9px] text-textMuted font-bold uppercase tracking-wider">الرصيد</div><div class="font-black text-accent text-base leading-none">4180</div></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Panels -->
+  <div class="flex-1 overflow-y-auto p-6">
+
+    <!-- S1: Visual Intelligence Restoration -->
+    <div id="panel-s1" class="panel active max-w-3xl mx-auto">
+
+      <!-- Upload section -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4">
+          <span class="text-accent font-black text-sm">الخدمة 01</span>
+          <span class="text-textMuted text-sm">/ الترميم البصري الذكي — Real-ESRGAN ×4</span>
+        </div>
+        <div class="upload-zone" id="zone-s1" onclick="triggerUpload('file-s1')">
+          <input type="file" id="file-s1" accept=".jpg,.jpeg,.png,.tiff,.tif,.raw" multiple onchange="s1_handleFiles(this)">
+          <i data-lucide="image-up" class="w-12 h-12 text-accent/50 mb-3"></i>
+          <p class="text-white font-bold mb-1">اسحب صور المنشآت التراثية هنا أو انقر للرفع</p>
+          <p class="text-textMuted text-xs mb-4">1 – 100 صورة · الدقة المطلوبة: 1920×1080 كحد أدنى</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / JPEG</span><span class="tag">PNG</span><span class="tag">TIFF</span><span class="tag">RAW</span>
+            <span class="tag bg-accent/10 border-accent/30 text-accent">50 MB / صورة</span>
+          </div>
+        </div>
+        <div id="files-s1" class="mt-3 space-y-2 hidden"></div>
+      </div>
+
+      <!-- Notes -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <p class="text-textMuted text-xs mb-3">ملاحظات إضافية (اختياري)</p>
+        <textarea id="s1-notes" class="field-input resize-none" rows="2" placeholder="مثال: التركيز على استعادة النقوش، تحسين الألوان..."></textarea>
+      </div>
+
+      <!-- Submit button -->
+      <button id="s1-submit-btn" onclick="s1_submit()" class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="sparkles" class="w-5 h-5"></i> بدء الترميم البصري
+      </button>
+
+      <!-- Processing state -->
+      <div id="s1-processing" class="hidden bg-panelDark border border-panelBorder rounded-2xl p-8 flex flex-col items-center gap-4">
+        <div class="spinner"></div>
+        <p class="text-white font-bold text-base">جارٍ المعالجة بالذكاء الاصطناعي...</p>
+        <p id="s1-proc-detail" class="text-textMuted text-xs text-center">يتم رفع الصور وإرسالها إلى نموذج Real-ESRGAN للترميم والتحسين البصري</p>
+        <div class="w-full bg-[#0b1521] rounded-full h-1.5 mt-2">
+          <div id="s1-progress-bar" class="bg-accent h-1.5 rounded-full transition-all duration-500" style="width:5%"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div id="s1-error" class="hidden bg-red-900/20 border border-red-500/30 rounded-2xl p-5 flex items-start gap-3">
+        <i data-lucide="alert-circle" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"></i>
+        <div><p class="text-red-300 font-bold text-sm mb-1">حدث خطأ</p><p id="s1-error-msg" class="text-red-400/80 text-xs"></p></div>
+      </div>
+
+      <!-- Results section -->
+      <div id="s1-results" class="hidden space-y-5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_#4ade80]"></div>
+            <span class="text-white font-bold">اكتملت المعالجة بنجاح</span>
+          </div>
+          <span id="s1-result-count" class="text-textMuted text-xs"></span>
+        </div>
+
+        <!-- Before/After comparisons -->
+        <div id="s1-comparisons" class="space-y-4"></div>
+
+        <!-- Download all outputs -->
+        <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+          <p class="text-accent font-bold text-sm mb-4">تحميل المخرجات</p>
+          <div id="s1-downloads" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <!-- Reset -->
+        <button onclick="s1_reset()" class="w-full bg-panelInner border border-panelBorder text-textMuted font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:text-white hover:border-accent/30 transition-all">
+          <i data-lucide="rotate-ccw" class="w-4 h-4"></i> ترميم صور جديدة
+        </button>
+      </div>
+
+    </div>
+
+    <!-- S2: Architectural Rehabilitation -->
+    <div id="panel-s2" class="panel max-w-3xl mx-auto">
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 02</span><span class="text-textMuted text-sm">/ رفع ملفات التصور المعماري</span></div>
+        <div class="upload-zone" onclick="triggerUpload('file-s2')">
+          <input type="file" id="file-s2" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf,.ppt,.pptx" multiple onchange="handleFiles(this,'s2')">
+          <i data-lucide="building-2" class="w-12 h-12 text-accent/50 mb-3"></i>
+          <p class="text-white font-bold mb-1">اسحب الملفات هنا أو انقر للرفع</p>
+          <p class="text-textMuted text-xs mb-4">صور · مخططات معمارية PDF · عروض PPT</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / PNG / TIFF</span><span class="tag">PDF</span><span class="tag">PPT / PPTX</span>
+            <span class="tag bg-accent/10 border-accent/30 text-accent">صور: 50 MB</span>
+            <span class="tag bg-accent/10 border-accent/30 text-accent">PDF / PPT: 100 MB</span>
+          </div>
+        </div>
+        <div id="files-s2" class="mt-3 space-y-2 hidden"></div>
+      </div>
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 grid grid-cols-2 gap-4">
+        <div><label class="field-label">الوظيفة المستهدفة للمبنى</label>
+          <select class="field-input"><option value="">اختر...</option><option>متحف</option><option>مركز زوار</option><option>مسكن</option><option>معرض</option><option>مطعم</option><option>مكتبة</option><option>أخرى</option></select></div>
+        <div><label class="field-label">النمط المعماري المطلوب</label>
+          <select class="field-input"><option value="">اختر...</option><option>نجدي</option><option>حجازي</option><option>عسيري</option><option>معاصر بهوية تراثية</option></select></div>
+        <div><label class="field-label">المساحة التقريبية (م²)</label>
+          <input type="number" class="field-input" placeholder="مثال: 500"></div>
+        <div><label class="field-label">عدد الطوابق المقترح</label>
+          <input type="number" class="field-input" placeholder="مثال: 2" min="1"></div>
+        <div class="col-span-2"><label class="field-label">متطلبات خاصة</label>
+          <textarea class="field-input resize-none" rows="2" placeholder="إمكانية وصول ذوي الاحتياجات الخاصة، استدامة..."></textarea></div>
+      </div>
+      <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="building-2" class="w-5 h-5"></i> توليد التصور المعماري
+      </button>
+    </div>
+
+    <!-- S3: Geospatial Analysis -->
+    <div id="panel-s3" class="panel max-w-3xl mx-auto">
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 03</span><span class="text-textMuted text-sm">/ البيانات الجغرافية والمكانية</span></div>
+
+        <p class="text-textMuted text-xs font-bold mb-2">ملفات GIS والبيانات الجغرافية</p>
+        <div class="upload-zone mb-4" onclick="triggerUpload('file-s3-geo')">
+          <input type="file" id="file-s3-geo" accept=".kml,.kmz,.shp,.geojson,.json" multiple onchange="handleFiles(this,'s3-geo')">
+          <i data-lucide="map-pin" class="w-10 h-10 text-accent/50 mb-2"></i>
+          <p class="text-white font-bold text-sm mb-3">ملفات GIS والإحداثيات</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">KML / KMZ</span><span class="tag">SHP</span><span class="tag">GeoJSON</span>
+          </div>
+        </div>
+        <div id="files-s3-geo" class="mb-4 space-y-2 hidden"></div>
+
+        <p class="text-textMuted text-xs font-bold mb-2">الصور الجوية والخرائط التاريخية</p>
+        <div class="upload-zone mb-4" onclick="triggerUpload('file-s3-aerial')">
+          <input type="file" id="file-s3-aerial" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf" multiple onchange="handleFiles(this,'s3-aerial')">
+          <i data-lucide="satellite-dish" class="w-10 h-10 text-accent/50 mb-2"></i>
+          <p class="text-white font-bold text-sm mb-3">صور جوية · خرائط تاريخية</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / PNG / TIFF</span><span class="tag">PDF</span>
+          </div>
+        </div>
+        <div id="files-s3-aerial" class="mb-4 space-y-2 hidden"></div>
+
+        <p class="text-textMuted text-xs font-bold mb-2">بيانات التضاريس (اختياري)</p>
+        <div class="upload-zone" onclick="triggerUpload('file-s3-dem')">
+          <input type="file" id="file-s3-dem" accept=".tif,.tiff,.asc,.las,.laz" multiple onchange="handleFiles(this,'s3-dem')">
+          <i data-lucide="mountain" class="w-10 h-10 text-accent/50 mb-2"></i>
+          <p class="text-white font-bold text-sm mb-3">DEM · LiDAR (اختياري)</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">TIF / ASC</span><span class="tag">LAS / LAZ</span>
+          </div>
+        </div>
+        <div id="files-s3-dem" class="mt-3 space-y-2 hidden"></div>
+      </div>
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 grid grid-cols-2 gap-4">
+        <div><label class="field-label">خط العرض (Latitude)</label><input type="number" step="any" class="field-input" placeholder="مثال: 24.6877"></div>
+        <div><label class="field-label">خط الطول (Longitude)</label><input type="number" step="any" class="field-input" placeholder="مثال: 46.7219"></div>
+      </div>
+      <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="map" class="w-5 h-5"></i> بدء التحليل الجغرافي
+      </button>
+    </div>
+
+    <!-- S4: Academic Reporting -->
+    <div id="panel-s4" class="panel max-w-3xl mx-auto">
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 04</span><span class="text-textMuted text-sm">/ مخرجات الخدمات السابقة</span></div>
+        <div class="upload-zone" onclick="triggerUpload('file-s4')">
+          <input type="file" id="file-s4" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf,.ppt,.pptx,.glb,.fbx,.obj,.stl" multiple onchange="handleFiles(this,'s4')">
+          <i data-lucide="file-text" class="w-12 h-12 text-accent/50 mb-3"></i>
+          <p class="text-white font-bold mb-1">مخرجات الخدمات 01 و02 و03</p>
+          <p class="text-textMuted text-xs mb-4">صور مرممة · تصورات معمارية · بيانات جغرافية</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / PNG</span><span class="tag">PDF</span><span class="tag">PPT</span><span class="tag">GLB / OBJ</span>
+          </div>
+        </div>
+        <div id="files-s4" class="mt-3 space-y-2 hidden"></div>
+      </div>
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 grid grid-cols-2 gap-4">
+        <div><label class="field-label">اسم المنشأة</label><input type="text" class="field-input" placeholder="مثال: قصر إبراهيم"></div>
+        <div><label class="field-label">الموقع</label><input type="text" class="field-input" placeholder="مثال: الأحساء، المنطقة الشرقية"></div>
+        <div><label class="field-label">التاريخ التقريبي للمنشأة</label><input type="text" class="field-input" placeholder="مثال: القرن الثامن عشر الميلادي"></div>
+        <div><label class="field-label">الحالة الراهنة</label>
+          <select class="field-input"><option value="">اختر...</option><option>مهجورة</option><option>مأهولة جزئياً</option><option>مدمرة جزئياً</option><option>تحت الترميم</option></select></div>
+        <div><label class="field-label">المعايير المطلوبة</label>
+          <select class="field-input"><option>معايير اليونسكو</option><option>هيئة التراث السعودية</option><option>كليهما</option></select></div>
+        <div><label class="field-label">نوع التقرير</label>
+          <select class="field-input"><option>تقرير توثيق</option><option>تقرير تأهيل</option><option>دراسة جدوى</option></select></div>
+        <div><label class="field-label">لغة التقرير</label>
+          <select class="field-input"><option>العربية</option><option>الإنجليزية</option><option>ثنائية اللغة</option></select></div>
+        <div><label class="field-label">مستوى التفصيل</label>
+          <select class="field-input"><option>موجز</option><option>متوسط</option><option>شامل</option></select></div>
+        <div class="col-span-2"><label class="field-label">معلومات تاريخية عن المنشأة</label>
+          <textarea class="field-input resize-none" rows="3" placeholder="أدخل أي معلومات تاريخية ذات صلة..."></textarea></div>
+      </div>
+      <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="file-check-2" class="w-5 h-5"></i> توليد التقرير الأكاديمي
+      </button>
+    </div>
+
+    <!-- S5: 3D Modeling -->
+    <div id="panel-s5" class="panel max-w-3xl mx-auto">
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 05</span><span class="text-textMuted text-sm">/ مخرجات التصورات المعمارية والجغرافية</span></div>
+        <div class="upload-zone" onclick="triggerUpload('file-s5')">
+          <input type="file" id="file-s5" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf,.ppt,.pptx,.geojson,.kml,.shp" multiple onchange="handleFiles(this,'s5')">
+          <i data-lucide="box" class="w-12 h-12 text-accent/50 mb-3"></i>
+          <p class="text-white font-bold mb-1">مخرجات الخدمة 02 و03</p>
+          <p class="text-textMuted text-xs mb-4">تصورات معمارية · بيانات نسيج عمراني · إحداثيات جغرافية</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / PNG / TIFF</span><span class="tag">PDF / PPT</span><span class="tag">GeoJSON / KML / SHP</span>
+          </div>
+        </div>
+        <div id="files-s5" class="mt-3 space-y-2 hidden"></div>
+      </div>
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 grid grid-cols-2 gap-4">
+        <div><label class="field-label">مستوى التفصيل</label>
+          <select class="field-input"><option>Low Poly</option><option>Medium Detail</option><option>High Detail</option></select></div>
+        <div><label class="field-label">الغرض من النموذج</label>
+          <select class="field-input"><option>طباعة ثلاثية الأبعاد</option><option>عرض معماري</option><option>واقع افتراضي / VR</option></select></div>
+        <div><label class="field-label">صيغة التصدير</label>
+          <select class="field-input"><option>STL (طباعة 3D)</option><option>OBJ</option><option>GLB</option><option>FBX</option></select></div>
+      </div>
+      <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="box" class="w-5 h-5"></i> بدء النمذجة ثلاثية الأبعاد
+      </button>
+    </div>
+
+    <!-- S6: Documentation & Media -->
+    <div id="panel-s6" class="panel max-w-3xl mx-auto">
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 06</span><span class="text-textMuted text-sm">/ جميع مخرجات الخدمات السابقة</span></div>
+        <div class="upload-zone" onclick="triggerUpload('file-s6')">
+          <input type="file" id="file-s6" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf,.ppt,.pptx,.glb,.fbx,.obj,.stl,.geojson,.kml" multiple onchange="handleFiles(this,'s6')">
+          <i data-lucide="folder-open" class="w-12 h-12 text-accent/50 mb-3"></i>
+          <p class="text-white font-bold mb-1">جميع مخرجات الخدمات 01 – 05</p>
+          <p class="text-textMuted text-xs mb-4">صور مرممة · تصورات · خرائط · تقارير · نماذج ثلاثية</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <span class="tag">JPG / PNG / PDF</span><span class="tag">PPT</span><span class="tag">GLB / OBJ / STL / FBX</span><span class="tag">GeoJSON / KML</span>
+          </div>
+        </div>
+        <div id="files-s6" class="mt-3 space-y-2 hidden"></div>
+      </div>
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 grid grid-cols-2 gap-4">
+        <div><label class="field-label">اسم المشروع</label><input type="text" class="field-input" placeholder="اسم المشروع الكامل"></div>
+        <div><label class="field-label">الجهة المنفذة</label><input type="text" class="field-input" placeholder="اسم الجهة أو المؤسسة"></div>
+        <div><label class="field-label">الباحث / الفريق</label><input type="text" class="field-input" placeholder="أسماء الباحثين"></div>
+        <div><label class="field-label">تاريخ الإعداد</label><input type="date" class="field-input"></div>
+        <div class="col-span-2"><label class="field-label">شعارات (Logos) — PNG/SVG فقط</label>
+          <div class="upload-zone !py-5" onclick="triggerUpload('file-s6-logo')">
+            <input type="file" id="file-s6-logo" accept=".png,.svg,.jpg" multiple onchange="handleFiles(this,'s6-logo')">
+            <p class="text-textMuted text-sm">انقر لرفع الشعارات <span class="tag">PNG</span> <span class="tag">SVG</span></p>
+          </div>
+          <div id="files-s6-logo" class="mt-2 space-y-2 hidden"></div>
+        </div>
+      </div>
+      <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
+        <i data-lucide="folder-output" class="w-5 h-5"></i> توليد الوثيقة التوثيقية الشاملة
+      </button>
+    </div>
+
+  </div><!-- end panels -->
+</main>
+
+<script>
+const headers={
+  s1:{icon:'sparkles',title:'الترميم البصري الذكي',sub:'Service 01: Visual Intelligence Restoration'},
+  s2:{icon:'building-2',title:'التصور المعماري التأهيلي',sub:'Service 02: Architectural Rehabilitation Visualization'},
+  s3:{icon:'map',title:'التحليل الجغرافي المكاني',sub:'Service 03: Geospatial Analysis & Urban Fabric Restoration'},
+  s4:{icon:'file-check-2',title:'التقارير الأكاديمية التلقائية',sub:'Service 04: Automated Academic Reporting'},
+  s5:{icon:'box',title:'النمذجة ثلاثية الأبعاد الشاملة',sub:'Service 05: Comprehensive 3D Modeling'},
+  s6:{icon:'folder-output',title:'المخرجات التوثيقية والإعلامية',sub:'Service 06: Documentation & Media Outputs'},
+};
+
+function switchPanel(id,el){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  el.classList.add('active');
+  const h=headers[id];
+  document.getElementById('hdr-title').textContent=h.title;
+  document.getElementById('hdr-sub').textContent=h.sub;
+  const iconEl=document.getElementById('hdr-icon');
+  iconEl.innerHTML=`<i data-lucide="${h.icon}" class="w-5 h-5"></i>`;
+  lucide.createIcons();
+}
+
+function triggerUpload(id){document.getElementById(id).click();}
+
+function handleFiles(input,key){
+  const list=document.getElementById('files-'+key);
+  if(!list)return;
+  list.innerHTML='';
+  if(input.files.length===0){list.classList.add('hidden');return;}
+  list.classList.remove('hidden');
+  Array.from(input.files).forEach(f=>{
+    const kb=(f.size/1024);
+    const size=kb>1024?`${(kb/1024).toFixed(1)} MB`:`${kb.toFixed(0)} KB`;
+    const div=document.createElement('div');
+    div.className='flex items-center gap-3 px-3 py-2 bg-panelInner rounded-xl border border-panelBorder';
+    div.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><span class="flex-1 text-white text-xs truncate font-medium">${f.name}</span><span class="text-textMuted text-xs">${size}</span>`;
+    list.appendChild(div);
+  });
+}
+
+// ── Service 01 specific JS ────────────────────────────────────────────────
+function s1_handleFiles(input){
+  handleFiles(input,'s1');
+}
+
+async function s1_submit(){
+  const fileInput = document.getElementById('file-s1');
+  if(!fileInput.files || fileInput.files.length === 0){
+    alert('يرجى اختيار صورة واحدة على الأقل للترميم.');
+    return;
+  }
+
+  // Show processing, hide others
+  document.getElementById('s1-submit-btn').classList.add('hidden');
+  document.getElementById('s1-results').classList.add('hidden');
+  document.getElementById('s1-error').classList.add('hidden');
+  const proc = document.getElementById('s1-processing');
+  proc.classList.remove('hidden');
+  proc.classList.add('flex');
+
+  // Animate progress bar
+  const bar = document.getElementById('s1-progress-bar');
+  let progress = 5;
+  const tick = setInterval(()=>{
+    progress = Math.min(progress + (progress < 60 ? 3 : 0.5), 90);
+    bar.style.width = progress + '%';
+  }, 800);
+
+  // Store client-side names before uploading (avoids server encoding issues)
+  const clientFileNames = Array.from(fileInput.files).map(f => f.name);
+
+  try {
+    const form = new FormData();
+    for(const f of fileInput.files) form.append('images', f);
+    const notes = document.getElementById('s1-notes').value.trim();
+    if (notes) form.append('notes', notes);
+
+    const detail = document.getElementById('s1-proc-detail');
+    detail.textContent = `جارٍ رفع ${fileInput.files.length} صورة إلى الخادم...`;
+
+    const res = await fetch('/api/service1/restore', { method: 'POST', body: form });
+    
+    detail.textContent = 'جارٍ معالجة الصور بنموذج Real-ESRGAN...';
+    
+    const data = await res.json();
+    clearInterval(tick);
+
+    if(!res.ok) throw new Error(data.error || 'خطأ في الخادم');
+
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 400));
+
+    s1_showResults(data, clientFileNames);
+
+
+  } catch(err){
+    clearInterval(tick);
+    proc.classList.add('hidden');
+    proc.classList.remove('flex');
+    document.getElementById('s1-submit-btn').classList.remove('hidden');
+    const errBox = document.getElementById('s1-error');
+    errBox.classList.remove('hidden');
+    errBox.classList.add('flex');
+    document.getElementById('s1-error-msg').textContent = err.message;
+    lucide.createIcons();
+  }
+}
+
+function s1_showResults(data, fileNames){
+  fileNames = fileNames || [];
+  const proc = document.getElementById('s1-processing');
+  proc.classList.add('hidden');
+  proc.classList.remove('flex');
+
+  const results = document.getElementById('s1-results');
+  results.classList.remove('hidden');
+  document.getElementById('s1-result-count').textContent =
+    `${data.images.length} صورة مرممة · ${data.outputFiles.length} ملف مخرج`;
+
+  // Before/After comparisons
+  const comparisons = document.getElementById('s1-comparisons');
+  comparisons.innerHTML = '';
+  for(const [i, img] of data.images.entries()){
+    const displayName = fileNames[i] || `صورة ${i+1}`;
+    const card = document.createElement('div');
+    card.className = 'bg-panelDark border border-panelBorder rounded-2xl p-4';
+    card.innerHTML = `
+      <p class="text-white font-bold text-xs mb-3 truncate" title="${displayName}">📷 ${displayName}</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <p class="text-textMuted text-[10px] font-bold mb-1.5 text-center">قبل التعديل</p>
+          <img src="${img.inputUrl}" class="compare-img" alt="before" onerror="this.style.display='none'">
+        </div>
+        <div>
+          <p class="text-accent text-[10px] font-bold mb-1.5 text-center">بعد الترميم ×4</p>
+          <img src="${img.outputUrl}" class="compare-img" alt="after" onerror="this.style.background='#1c3554'">
+        </div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <a href="${img.outputUrl.replace('.png','.jpg')}" download class="dl-btn primary flex-1 justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          JPG
+        </a>
+        <a href="${img.outputUrl}" download class="dl-btn flex-1 justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          PNG
+        </a>
+        <a href="${img.outputUrl.replace('.png','.tiff')}" download class="dl-btn flex-1 justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          TIFF
+        </a>
+      </div>`;
+    comparisons.appendChild(card);
+  }
+
+  // Download all outputs
+  const dlContainer = document.getElementById('s1-downloads');
+  dlContainer.innerHTML = '';
+  const icons = { pdf:'📄', json:'📋', docx:'📝', png:'🖼', jpg:'🖼', tiff:'🖼' };
+  for(const f of data.outputFiles){
+    const ext = f.ext || f.url.split('.').pop();
+    const a = document.createElement('a');
+    a.href = f.url; a.download = '';
+    a.className = ['pdf','docx','json'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
+    a.innerHTML = `<span>${icons[ext]||'📁'}</span><span>${f.label}</span>`;
+    dlContainer.appendChild(a);
+  }
+}
+
+function s1_reset(){
+  document.getElementById('s1-results').classList.add('hidden');
+  document.getElementById('s1-error').classList.add('hidden');
+  document.getElementById('s1-submit-btn').classList.remove('hidden');
+  document.getElementById('file-s1').value = '';
+  document.getElementById('files-s1').innerHTML = '';
+  document.getElementById('files-s1').classList.add('hidden');
+  document.getElementById('s1-progress-bar').style.width = '5%';
+}
+
+lucide.createIcons();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "jobId": "bff073cb-421c-4c30-89be-02b1efb2c1b7",
+  "service": 1,
+  "model": "nightmareai/real-esrgan",
+  "scale": 4,
+  "processedAt": "2026-03-10T15:16:18.508Z",
+  "imageCount": 1,
+  "images": [
+    {
+      "originalName": "ÙØ¨Ù Ø§ÙØªØ±ÙÙÙ.png",
+      "inputSizeKB": 2118
+    }
+  ]
+}

@@ -161,72 +161,137 @@ router.post('/restore', (req, res, next) => {
 
   try {
     const results = [];
+    const t0 = Date.now();
+
+    console.log('\n' + '═'.repeat(60));
+    console.log(`🚀  JOB STARTED  |  id: ${jobId}`);
+    console.log(`📂  Images: ${req.files.length}  |  ${new Date().toLocaleTimeString()}`);
+    console.log('═'.repeat(60));
+
+    // Restoration prompt for Nano Banana
+    const userPrompt = (req.body && req.body.prompt && req.body.prompt.trim())
+      ? req.body.prompt.trim()
+      : 'Restore this historic building realistically. Reconstruct missing architectural sections, repair cracks and collapsed walls, preserve the original heritage style, maintain the same camera angle and lighting, keep authentic materials and traditional decorative details, do not modernize the building.';
 
     for (const [idx, file] of req.files.entries()) {
-      console.log(`[S1] Processing image ${idx+1}/${req.files.length}: ${file.originalname}`);
+      // Decode Arabic / non-ASCII filenames (multer stores bytes as Latin-1)
+      const cleanName = (() => {
+        try { return Buffer.from(file.originalname, 'latin1').toString('utf8'); }
+        catch { return `image_${String(idx+1).padStart(2,'0')}`; }
+      })();
 
-      // Convert to PNG buffer for Replicate
-      console.log(`[S1] Converting to PNG...`);
+      const imgT0 = Date.now();
+      console.log(`\n┌─ Image ${idx+1}/${req.files.length} ─────────────────────────────────`);
+      console.log(`│  File   : ${cleanName}`);
+      console.log(`│  Size   : ${(file.size/1024).toFixed(0)} KB`);
+
+
+      // ── Phase 1-A: Prepare input ────────────────────────────────────
+      console.log('│');
+      console.log('│  [A] Converting to PNG for Nano Banana...');
       const pngBuf  = await toPngBuffer(file.path);
       const dataUrl = toDataURL(pngBuf);
-      console.log(`[S1] PNG buffer size: ${(pngBuf.length/1024).toFixed(0)} KB`);
+      console.log(`│      ✓ PNG ready — ${(pngBuf.length/1024).toFixed(0)} KB`);
 
-      // Call Replicate — parse notes to influence model params
-      const notes = (req.body && req.body.notes) ? req.body.notes.toLowerCase() : '';
-      const faceEnhance = notes.includes('وجه') || notes.includes('face') || notes.includes('بشري');
-      const scaleValue  = notes.includes('2x') || notes.includes('×2') ? 2 : 4;
-      // Choose model variant based on notes
-      let modelName = 'RealESRGAN_x4plus';
-      if (notes.includes('anime') || notes.includes('انمي') || notes.includes('رسوم')) modelName = 'RealESRGAN_x4plus_anime_6B';
-      if (scaleValue === 2) modelName = 'RealESRGAN_x2plus';
-
-      console.log(`[S1] Replicate params: scale=${scaleValue} face=${faceEnhance} model=${modelName} notes="${notes.substring(0,60)}"`);
-      let outputUrl;
+      // ── Phase 1-B: Nano Banana ──────────────────────────────────────
+      console.log('│');
+      console.log('│  [B] ▶ google/nano-banana-2  (Phase 1: Restoration)');
+      console.log(`│      Prompt : "${userPrompt.substring(0, 80)}"`);
+      console.log('│      Calling Replicate API...');
+      const nbT0 = Date.now();
+      let nanoBananaUrl;
       try {
-        const output = await replicate.run('nightmareai/real-esrgan', {
-          input: { image: dataUrl, scale: scaleValue, face_enhance: faceEnhance, model: modelName }
+        const nbOutput = await replicate.run('google/nano-banana-2', {
+          input: {
+            prompt:        userPrompt,
+            image_input:   [dataUrl],
+            aspect_ratio:  'match_input_image',
+            resolution:    '1K',
+            output_format: 'jpg',
+          },
         });
-        // Replicate v1.x returns FileOutput objects — String() extracts the URL
-        outputUrl = String(output);
-        console.log(`[S1] Replicate output: ${outputUrl.substring(0,80)}`);
-        if (!outputUrl.startsWith('http')) throw new Error(`Unexpected output format: ${outputUrl.substring(0,60)}`);
-      } catch(repErr) {
-        console.error(`[S1] Replicate error:`, repErr.message);
-        throw new Error(`Replicate API error: ${repErr.message}`);
+        nanoBananaUrl = String(Array.isArray(nbOutput) ? nbOutput[0] : nbOutput);
+        if (!nanoBananaUrl.startsWith('http')) throw new Error(`Unexpected output: ${nanoBananaUrl.substring(0,60)}`);
+        console.log(`│      ✓ Done in ${((Date.now()-nbT0)/1000).toFixed(1)}s`);
+        console.log(`│      URL: ${nanoBananaUrl.substring(0,70)}...`);
+      } catch(nbErr) {
+        console.error(`│  ✗ Nano Banana failed: ${nbErr.message}`);
+        throw new Error(`Nano Banana error: ${nbErr.message}`);
       }
 
-      // Clean numeric filename — avoids Windows UTF-8 encoding issues with Arabic names
-      const baseName   = `image_${String(idx+1).padStart(2,'0')}`;
-      const pngPath    = path.join(jobDir, `${baseName}_restored.png`);
-      console.log(`[S1] Downloading result to ${pngPath}...`);
-      await downloadFile(outputUrl, pngPath);
+      // ── Phase 1-C: Download Nano Banana output ──────────────────────
+      const baseName = `image_${String(idx+1).padStart(2,'0')}`;
+      const nbJpg    = path.join(jobDir, `${baseName}_nanobana.jpg`);
+      console.log('│');
+      console.log('│  [C] Downloading Nano Banana output...');
+      await downloadFile(nanoBananaUrl, nbJpg);
+      console.log(`│      ✓ Saved JPG — ${(fs.statSync(nbJpg).size/1024).toFixed(0)} KB`);
 
-      // Generate JPG and TIFF via Sharp
+      // ── Phase 2-A: Convert NB output for ESRGAN ─────────────────────
+      console.log('│');
+      console.log('│  [D] Converting Nano Banana output for Real-ESRGAN...');
+      const nbBuf       = await toPngBuffer(nbJpg);
+      const nbDataUrl   = toDataURL(nbBuf);
+      console.log(`│      ✓ Ready — ${(nbBuf.length/1024).toFixed(0)} KB`);
+
+      // ── Phase 2-B: Real-ESRGAN ×4 ───────────────────────────────────
+      console.log('│');
+      console.log('│  [E] ▶ nightmareai/real-esrgan  (Phase 2: ×4 Upscale)');
+      console.log('│      Scale    : ×4');
+      console.log('│      Calling Replicate API...');
+      const esrT0 = Date.now();
+      let esrUrl;
+      try {
+        const esrOutput = await replicate.run('nightmareai/real-esrgan', {
+          input: { image: nbDataUrl, scale: 4, face_enhance: false },
+        });
+        esrUrl = String(esrOutput);
+        if (!esrUrl.startsWith('http')) throw new Error(`Unexpected output: ${esrUrl.substring(0,60)}`);
+        console.log(`│      ✓ Done in ${((Date.now()-esrT0)/1000).toFixed(1)}s`);
+        console.log(`│      URL: ${esrUrl.substring(0,70)}...`);
+      } catch(repErr) {
+        console.error(`│  ✗ Real-ESRGAN failed: ${repErr.message}`);
+        throw new Error(`Real-ESRGAN error: ${repErr.message}`);
+      }
+
+      // ── Phase 2-C: Download & convert ESRGAN output ─────────────────
+      const pngPath  = path.join(jobDir, `${baseName}_restored.png`);
       const jpgPath  = path.join(jobDir, `${baseName}_restored.jpg`);
       const tiffPath = path.join(jobDir, `${baseName}_restored.tiff`);
+      console.log('│');
+      console.log('│  [F] Downloading & converting final output...');
+      await downloadFile(esrUrl, pngPath);
+      console.log(`│      ✓ PNG saved — ${(fs.statSync(pngPath).size/1024).toFixed(0)} KB`);
       await sharp(pngPath).jpeg({ quality: 95 }).toFile(jpgPath);
+      console.log(`│      ✓ JPG saved — ${(fs.statSync(jpgPath).size/1024).toFixed(0)} KB`);
       await sharp(pngPath).tiff({ compression: 'lzw' }).toFile(tiffPath);
+      console.log(`│      ✓ TIFF saved — ${(fs.statSync(tiffPath).size/1024).toFixed(0)} KB`);
 
       results.push({
-        originalName:   file.originalname,
-        inputPath:      file.path,
-        inputSizeBytes: file.size,
-        outputPng:      pngPath,
-        outputJpg:      jpgPath,
-        outputTiff:     tiffPath,
+        originalName:      cleanName,
+        inputPath:         file.path,
+        inputSizeBytes:    file.size,
+        nanoBananaPath:    nbJpg,
+        outputPng:         pngPath,
+        outputJpg:         jpgPath,
+        outputTiff:        tiffPath,
       });
-      console.log(`[S1] Image ${idx+1} done.`);
+      console.log(`└─ Image ${idx+1} complete in ${((Date.now()-imgT0)/1000).toFixed(1)}s ────────────────────`);
     }
 
-    // PDF report
-    console.log('[S1] Building PDF report...');
+
+    // ── Step E: PDF Report ────────────────────────────────────────────────
+    console.log('\n[E] Building PDF before/after report...');
     const pdfPath  = path.join(jobDir, 'before_after_report.pdf');
     await buildPdfReport(results, pdfPath);
+    console.log(`    ✓ PDF saved — ${(fs.statSync(pdfPath).size/1024).toFixed(0)} KB`);
 
-    // JSON metadata
+    // ── Step F: Metadata JSON ─────────────────────────────────────────────
+    console.log('[F] Writing metadata.json...');
     const metaPath = path.join(jobDir, 'metadata.json');
     const meta = {
-      jobId, service: 1, model: 'nightmareai/real-esrgan', scale: 4,
+      jobId, service: 1,
+      pipeline: 'google/nano-banana-2 → nightmareai/real-esrgan ×4',
       processedAt: new Date().toISOString(),
       imageCount: results.length,
       images: results.map(r => ({
@@ -235,11 +300,13 @@ router.post('/restore', (req, res, next) => {
       })),
     };
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    console.log(`    ✓ metadata.json written`);
 
-    // Word doc
-    console.log('[S1] Building Word doc...');
+    // ── Step G: Word doc ──────────────────────────────────────────────────
+    console.log('[G] Building Word description doc...');
     const docxPath = path.join(jobDir, 'description.docx');
     await buildWordDoc(results, docxPath);
+    console.log(`    ✓ description.docx written`);
 
     // Build output file list
     const relUrl = p => `/outputs/${jobId}/${path.basename(p)}`;
@@ -264,15 +331,19 @@ router.post('/restore', (req, res, next) => {
       catch { /* ok */ }
     }
 
-    console.log(`[S1] Job ${jobId} complete. ${results.length} images processed.`);
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`✅  JOB DONE  |  ${results.length} image(s)  |  ${((Date.now()-t0)/1000).toFixed(1)}s total`);
+    console.log(`📁  Output: outputs/${jobId}`);
+    console.log(`${'═'.repeat(60)}\n`);
     return res.json({
       success: true,
       jobId,
       outputFiles,
       images: results.map(r => ({
-        originalName: r.originalName,
-        inputUrl:  `/uploads/${path.basename(r.inputPath)}`,
-        outputUrl: relUrl(r.outputPng),
+        originalName:  r.originalName,
+        inputUrl:      `/uploads/${path.basename(r.inputPath)}`,
+        nanoBananaUrl: relUrl(r.nanoBananaPath),
+        outputUrl:     relUrl(r.outputPng),
       })),
     });
 
@@ -295,9 +366,9 @@ router.get('/job/:jobId', async (req, res) => {
   }
 });
 
-// ── Step 2: GFPGAN Face & Detail Enhancement ──────────────────────────────
+// ── Step 2: Flux Canny Pro — Edge-guided regeneration ────────────────────
 // POST /api/service1/enhance/:jobId
-// Body JSON: { images: [ { esrganUrl, index } ] }
+// Body JSON: { images: [ { esrganUrl, index } ], prompt?: string }
 router.post('/enhance/:jobId', express.json(), async (req, res) => {
   const { jobId } = req.params;
   const jobDir = path.join(OUTPUTS_DIR, jobId);
@@ -305,83 +376,119 @@ router.post('/enhance/:jobId', express.json(), async (req, res) => {
   if (!fs.existsSync(jobDir))
     return res.status(404).json({ error: 'Job not found — invalid jobId' });
 
-  // Accept list of esrgan output URLs from frontend
   const imagesToEnhance = req.body && req.body.images;
   if (!imagesToEnhance || !imagesToEnhance.length)
     return res.status(400).json({ error: 'No images provided' });
 
+  // Prompt: from frontend, or default heritage prompt
+  const userPrompt = (req.body.prompt || '').trim() ||
+    'Heritage building restoration, high-resolution architectural photography, photorealistic, detailed stone textures, preserved historical details';
+
   try {
     const results = [];
+    const t0 = Date.now();
+
+    console.log('\n' + '═'.repeat(60));
+    console.log(`🎨  FLUX CANNY PRO — STEP 2  |  job: ${jobId}`);
+    console.log(`📂  Images: ${imagesToEnhance.length}  |  ${new Date().toLocaleTimeString()}`);
+    console.log(`💬  Prompt: "${userPrompt.substring(0, 70)}"`);
+    console.log('═'.repeat(60));
 
     for (const [i, item] of imagesToEnhance.entries()) {
-      const idx     = item.index !== undefined ? item.index : i;
-      const esrUrl  = item.esrganUrl; // full URL like /outputs/jobId/image_01_restored.png
+      const idx    = item.index !== undefined ? item.index : i;
+      const esrUrl = item.esrganUrl;
+      const imgT0  = Date.now();
 
-      console.log(`[S1-GFPGAN] Processing image ${idx+1}: ${esrUrl}`);
+      console.log(`\n┌─ Image ${idx+1} ─────────────────────────────────────────────`);
+      console.log(`│  ESRGAN input : ${esrUrl}`);
 
-      // Resolve local path from relative URL
+      // ── Step A: Load ESRGAN output ───────────────────────────────────
       const localPath = path.join(__dirname, '../../public', esrUrl);
-
-      // Convert local file → data URL for GFPGAN
-      let inputDataUrl;
+      let controlImage;
+      console.log('│');
+      console.log('│  [A] Loading Real-ESRGAN output as control image...');
       if (fs.existsSync(localPath)) {
         const buf = await toPngBuffer(localPath);
-        inputDataUrl = toDataURL(buf);
-        console.log(`[S1-GFPGAN] Local file loaded (${(buf.length/1024).toFixed(0)} KB)`);
+        controlImage = toDataURL(buf);
+        console.log(`│      ✓ Loaded from disk — ${(buf.length/1024).toFixed(0)} KB (base64 ready)`);
       } else {
-        // Fallback: pass the full URL if local file not found
-        const host = `http://localhost:${process.env.PORT || 3000}`;
-        inputDataUrl = `${host}${esrUrl}`;
-        console.log(`[S1-GFPGAN] Using URL fallback: ${inputDataUrl}`);
+        // Fallback: public URL — Replicate can't reach localhost but try
+        controlImage = `http://localhost:${process.env.PORT || 3000}${esrUrl}`;
+        console.log(`│      ⚠ Not on disk, using URL: ${controlImage}`);
       }
 
-      // Call GFPGAN
-      console.log(`[S1-GFPGAN] Calling tencentarc/gfpgan...`);
-      let gfpganUrl;
+      // ── Step B: Flux Canny Pro ────────────────────────────────────────
+      console.log('│');
+      console.log('│  [B] ▶ black-forest-labs/flux-canny-pro');
+      console.log(`│      Prompt   : "${userPrompt.substring(0, 70)}"`);
+      console.log('│      Steps    : 28');
+      console.log('│      Guidance : 7.5');
+      console.log('│      Calling Replicate API...');
+      const fluxT0 = Date.now();
+      let fluxUrl;
       try {
-        const output = await replicate.run(
-          'tencentarc/gfpgan:0fbacf7afc6c144e5be9767cff80f25aff23e52b0708f17e20f9879b2f21516c',
-          { input: { img: inputDataUrl, version: '1.4', scale: 2 } }
-        );
-        gfpganUrl = String(output);
-        console.log(`[S1-GFPGAN] Output: ${gfpganUrl.substring(0, 80)}`);
-        if (!gfpganUrl.startsWith('http')) throw new Error(`Unexpected GFPGAN output: ${gfpganUrl.substring(0,60)}`);
+        const output = await replicate.run('black-forest-labs/flux-canny-pro', {
+          input: {
+            control_image:  controlImage,
+            prompt:         userPrompt,
+            steps:          28,
+            guidance:       7.5,
+            output_format:  'png',
+            output_quality: 95,
+          },
+        });
+        fluxUrl = String(output);
+        if (!fluxUrl.startsWith('http')) throw new Error(`Unexpected output: ${fluxUrl.substring(0, 60)}`);
+        console.log(`│      ✓ Done in ${((Date.now()-fluxT0)/1000).toFixed(1)}s`);
+        console.log(`│      URL: ${fluxUrl.substring(0, 70)}...`);
       } catch (e) {
-        console.error(`[S1-GFPGAN] Error:`, e.message);
-        throw new Error(`GFPGAN error: ${e.message}`);
+        console.error(`│  ✗ Flux Canny Pro failed: ${e.message}`);
+        throw new Error(`Flux Canny Pro error: ${e.message}`);
       }
 
-      // Download and save GFPGAN output
-      const baseName  = `image_${String(idx+1).padStart(2,'0')}`;
-      const gfpPng    = path.join(jobDir, `${baseName}_gfpgan.png`);
-      const gfpJpg    = path.join(jobDir, `${baseName}_gfpgan.jpg`);
-      const gfpTiff   = path.join(jobDir, `${baseName}_gfpgan.tiff`);
 
-      await downloadFile(gfpganUrl, gfpPng);
-      await sharp(gfpPng).jpeg({ quality: 95 }).toFile(gfpJpg);
-      await sharp(gfpPng).tiff({ compression: 'lzw' }).toFile(gfpTiff);
+      // ── Step C: Download ─────────────────────────────────────────────
+      console.log('│');
+      console.log('│  [C] Downloading Flux Canny Pro output...');
+      const baseName = `image_${String(idx+1).padStart(2,'0')}`;
+      const fluxPng  = path.join(jobDir, `${baseName}_flux.png`);
+      const fluxJpg  = path.join(jobDir, `${baseName}_flux.jpg`);
+      const fluxTiff = path.join(jobDir, `${baseName}_flux.tiff`);
+      await downloadFile(fluxUrl, fluxPng);
+      console.log(`│      ✓ PNG saved — ${(fs.statSync(fluxPng).size/1024).toFixed(0)} KB`);
+
+      // ── Step D: Convert ──────────────────────────────────────────────
+      console.log('│');
+      console.log('│  [D] Generating output formats...');
+      await sharp(fluxPng).jpeg({ quality: 95 }).toFile(fluxJpg);
+      console.log(`│      ✓ JPG saved — ${(fs.statSync(fluxJpg).size/1024).toFixed(0)} KB`);
+      await sharp(fluxPng).tiff({ compression: 'lzw' }).toFile(fluxTiff);
+      console.log(`│      ✓ TIFF saved — ${(fs.statSync(fluxTiff).size/1024).toFixed(0)} KB`);
 
       const relUrl = p => `/outputs/${jobId}/${path.basename(p)}`;
       results.push({
-        index:      idx,
-        esrganUrl:  esrUrl,           // before (ESRGAN output)
-        gfpganUrl:  relUrl(gfpPng),   // after  (GFPGAN output)
+        index:    idx,
+        esrganUrl: esrUrl,
+        fluxUrl:  relUrl(fluxPng),
         outputs: [
-          { label: `صورة ${idx+1} — PNG (GFPGAN)`,        url: relUrl(gfpPng),  ext: 'png'  },
-          { label: `صورة ${idx+1} — JPG (GFPGAN)`,        url: relUrl(gfpJpg),  ext: 'jpg'  },
-          { label: `صورة ${idx+1} — TIFF (GFPGAN)`,       url: relUrl(gfpTiff), ext: 'tiff' },
+          { label: `صورة ${idx+1} — PNG (Flux Canny Pro)`,  url: relUrl(fluxPng),  ext: 'png'  },
+          { label: `صورة ${idx+1} — JPG (Flux Canny Pro)`,  url: relUrl(fluxJpg),  ext: 'jpg'  },
+          { label: `صورة ${idx+1} — TIFF (Flux Canny Pro)`, url: relUrl(fluxTiff), ext: 'tiff' },
         ],
       });
-      console.log(`[S1-GFPGAN] Image ${idx+1} done.`);
+      console.log(`└─ Image ${idx+1} done in ${((Date.now()-imgT0)/1000).toFixed(1)}s ────────────────────────────`);
     }
+
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`✅  FLUX CANNY PRO DONE  |  ${results.length} image(s)  |  ${((Date.now()-t0)/1000).toFixed(1)}s total`);
+    console.log(`${'═'.repeat(60)}\n`);
 
     return res.json({ success: true, jobId, results });
 
   } catch (err) {
-    console.error('[S1-GFPGAN] Fatal error:', err);
-    return res.status(500).json({ error: err.message || 'GFPGAN processing failed' });
+    console.error('\n✗ [Flux Canny Pro] Fatal error:', err.message);
+    return res.status(500).json({ error: err.message || 'Flux Canny Pro processing failed' });
   }
 });
 
 module.exports = router;
-

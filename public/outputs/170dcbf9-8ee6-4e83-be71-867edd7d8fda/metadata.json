@@ -1,0 +1,26 @@
+{
+  "jobId": "170dcbf9-8ee6-4e83-be71-867edd7d8fda",
+  "service": 2,
+  "model": "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc",
+  "style": "حجازي",
+  "buildingType": "متحف",
+  "area": "800",
+  "floors": "2",
+  "buildingName": "تجريبي",
+  "viewsGenerated": 8,
+  "styleAnalysis": {
+    "detectedStyle": "Mixed",
+    "confidence": "Medium",
+    "elements": [
+      "stone material",
+      "ornate decorations",
+      "arched windows",
+      "decorative columns",
+      "intricate patterns"
+    ],
+    "notes": "The building exhibits a blend of architectural influences with elaborate detailing and a unique tower structure. Rehabilitation potential is high due to its distinctive design and historical value."
+  },
+  "gpt4oEnabled": true,
+  "processedAt": "2026-03-11T04:27:59.518Z",
+  "totalTimeSec": "154.3"
+}

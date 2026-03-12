@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="648" height="554" viewBox="0 0 648 554">
+  <rect width="648" height="554" fill="#f8f9fa"/>
+  <rect x="60" y="60" width="528" height="374"
+        fill="white" stroke="#1a3554" stroke-width="3"/>
+  
+    <rect x="66.6" y="66.6" width="254.10000000000002" height="85.25"
+          fill="#f0f4ff" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="193.65" y="105.225" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Main Hall</text>
+    <text x="193.65" y="118.225" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="327.30000000000007" y="66.6" width="254.10000000000002" height="85.25"
+          fill="#fff4e6" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="454.3500000000001" y="105.225" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Gallery A</text>
+    <text x="454.3500000000001" y="118.225" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="66.6" y="158.45" width="254.10000000000002" height="85.25"
+          fill="#f0fff4" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="193.65" y="197.075" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Gallery B</text>
+    <text x="193.65" y="210.075" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="327.30000000000007" y="158.45" width="254.10000000000002" height="85.25"
+          fill="#fdf0ff" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="454.3500000000001" y="197.075" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Reception</text>
+    <text x="454.3500000000001" y="210.075" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="66.6" y="250.3" width="254.10000000000002" height="85.25"
+          fill="#e6f7ff" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="193.65" y="288.925" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Storage</text>
+    <text x="193.65" y="301.925" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="327.30000000000007" y="250.3" width="254.10000000000002" height="85.25"
+          fill="#fffbe6" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="454.3500000000001" y="288.925" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Restrooms</text>
+    <text x="454.3500000000001" y="301.925" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="66.6" y="342.15" width="254.10000000000002" height="85.25"
+          fill="#f5f5f5" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="193.65" y="380.775" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Staff Room</text>
+    <text x="193.65" y="393.775" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+    <rect x="327.30000000000007" y="342.15" width="254.10000000000002" height="85.25"
+          fill="#fff0f0" stroke="#1a3554" stroke-width="1.5" rx="3"/>
+    <text x="454.3500000000001" y="380.775" text-anchor="middle" font-family="Arial" font-size="9" fill="#1a3554" font-weight="bold">Utility</text>
+    <text x="454.3500000000001" y="393.775" text-anchor="middle" font-family="Arial" font-size="7" fill="#666">45 m²</text>
+  <text x="324" y="524" text-anchor="middle" font-family="Arial" font-size="13" fill="#1a3554" font-weight="bold">
+    GROUND FLOOR PLAN — HERITAGE BUILDING</text>
+  <text x="324" y="540" text-anchor="middle" font-family="Arial" font-size="9" fill="#666">
+    Floor Area: 400 m²  |  2 Floor(s)  |  Building Width: 24m × Depth: 17m</text>
+  <line x1="60" y1="444" x2="588" y2="444" stroke="#1a3554" stroke-width="1"/>
+  <text x="324" y="458" text-anchor="middle" font-family="Arial" font-size="8" fill="#1a3554">24 m</text>
+</svg>

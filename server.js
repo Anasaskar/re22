@@ -18,6 +18,8 @@ app.use('/outputs', express.static(path.join(__dirname, 'public/outputs')));
 
 // ── API Routes ────────────────────────────────────────────────────────────
 app.use('/api/service1', require('./src/routes/service1'));
+app.use('/api/service2', require('./src/routes/service2'));
+app.use('/api/service3', require('./src/routes/service3'));
 
 // ── Index fallback ────────────────────────────────────────────────────────
 app.get('/', (req, res) => {

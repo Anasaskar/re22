@@ -174,6 +174,36 @@ select.field-input option{background:#102033}
         <!-- Before/After comparisons -->
         <div id="s1-comparisons" class="space-y-4"></div>
 
+        <div id="s1-upscale-panel" class="hidden bg-panelDark border border-panelBorder rounded-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p class="text-white font-bold text-sm">Upscaling</p>
+              <p class="text-textMuted text-xs mt-1">Run upscaling separately after restoration finishes.</p>
+            </div>
+            <button id="s1-upscale-btn" onclick="s1_upscale()" class="px-4 py-2 rounded-xl bg-[#38bdf8]/10 border border-[#38bdf8]/30 text-[#38bdf8] font-bold text-sm hover:bg-[#38bdf8] hover:text-[#0b1521] transition-colors flex items-center gap-2">
+              <i data-lucide="expand" class="w-4 h-4"></i> Start Upscaling
+            </button>
+          </div>
+
+          <div id="s1-upscale-processing" class="hidden bg-[#0b1521] border border-panelBorder rounded-2xl p-5 flex flex-col items-center gap-3">
+            <div class="spinner"></div>
+            <p class="text-white font-bold text-sm">Upscaling image resolution...</p>
+          </div>
+
+          <div id="s1-upscale-error" class="hidden bg-red-900/20 border border-red-500/30 rounded-2xl p-4 flex items-start gap-3">
+            <i data-lucide="alert-circle" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"></i>
+            <div><p class="text-red-300 font-bold text-sm mb-1">Step 2 failed</p><p id="s1-upscale-error-msg" class="text-red-400/80 text-xs"></p></div>
+          </div>
+
+          <div id="s1-upscale-results" class="hidden space-y-4">
+            <div id="s1-upscale-comparisons" class="space-y-4"></div>
+            <div class="bg-[#0b1521] border border-panelBorder rounded-2xl p-4">
+              <p class="text-[#38bdf8] font-bold text-sm mb-3">Step 2 Downloads</p>
+              <div id="s1-upscale-downloads" class="flex flex-wrap gap-2"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Download all outputs -->
         <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
           <p class="text-accent font-bold text-sm mb-4">تحميل المخرجات</p>
@@ -1122,6 +1152,313 @@ async function s1_applyGfpgan(){
 
 
 // ── Service 03: Geospatial & Urban Analysis ─────────────────────────────
+function s1_initStepLabels() {
+  const submitBtn = document.getElementById('s1-submit-btn');
+  if (submitBtn) {
+    submitBtn.innerHTML = '<i data-lucide="sparkles" class="w-5 h-5"></i> Start Restoration';
+  }
+
+  const procDetail = document.getElementById('s1-proc-detail');
+  if (procDetail) {
+    procDetail.textContent = 'Images are uploaded for restoration.';
+  }
+
+  const step1DownloadsTitle = document.querySelector('#s1-downloads')?.previousElementSibling;
+  if (step1DownloadsTitle) {
+    step1DownloadsTitle.textContent = 'Step 1 Downloads';
+  }
+}
+
+s1_initStepLabels();
+
+function s1_normalizeImage(img = {}) {
+  const restoredUrl = img.restoredUrl || img.outputUrl || img.nanoBananaUrl || '';
+  const restoredJpgUrl = img.restoredJpgUrl ||
+    (restoredUrl ? restoredUrl.replace(/\.png($|\?)/, '.jpg$1') : '');
+  const restoredTiffUrl = img.restoredTiffUrl ||
+    (restoredUrl ? restoredUrl.replace(/\.png($|\?)/, '.tiff$1') : '');
+  const upscaledUrl = img.upscaledUrl || img.outputUrl || '';
+  const upscaledJpgUrl = img.upscaledJpgUrl ||
+    (upscaledUrl ? upscaledUrl.replace(/\.png($|\?)/, '.jpg$1') : '');
+  const upscaledTiffUrl = img.upscaledTiffUrl ||
+    (upscaledUrl ? upscaledUrl.replace(/\.png($|\?)/, '.tiff$1') : '');
+
+  return {
+    ...img,
+    inputUrl: img.inputUrl || '',
+    restoredUrl,
+    restoredJpgUrl,
+    restoredTiffUrl,
+    upscaledUrl,
+    upscaledJpgUrl,
+    upscaledTiffUrl,
+  };
+}
+
+async function s1_readApiResponse(res) {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+  if (contentType.includes('application/json')) {
+    return await res.json();
+  }
+
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {}
+  }
+
+  const looksLikeHtml = /<!doctype html|<html|<head|<body/i.test(trimmed);
+  if (looksLikeHtml) {
+    throw new Error('The server returned an HTML page instead of the API response. Restart the server, then try again.');
+  }
+
+  throw new Error(trimmed || 'Unexpected non-JSON response from the server.');
+}
+
+async function s1_submit(){
+  const fileInput = document.getElementById('file-s1');
+  if(!fileInput.files || fileInput.files.length === 0){
+    alert('Please select at least one image.');
+    return;
+  }
+
+  document.getElementById('s1-submit-btn').classList.add('hidden');
+  document.getElementById('s1-results').classList.add('hidden');
+  document.getElementById('s1-error').classList.add('hidden');
+  const proc = document.getElementById('s1-processing');
+  proc.classList.remove('hidden');
+  proc.classList.add('flex');
+
+  const bar = document.getElementById('s1-progress-bar');
+  let progress = 5;
+  const tick = setInterval(() => {
+    progress = Math.min(progress + (progress < 60 ? 3 : 0.5), 90);
+    bar.style.width = progress + '%';
+  }, 800);
+
+  const clientFileNames = Array.from(fileInput.files).map(f => f.name);
+
+  try {
+    const form = new FormData();
+    for (const f of fileInput.files) form.append('images', f);
+    const prompt = document.getElementById('s1-prompt')?.value.trim();
+    if (prompt) form.append('prompt', prompt);
+
+    document.getElementById('s1-proc-detail').textContent =
+      `Uploading ${fileInput.files.length} image(s) for restoration...`;
+
+    const res = await fetch('/api/service1/restore', { method: 'POST', body: form });
+    const data = await s1_readApiResponse(res);
+    clearInterval(tick);
+
+    if (!res.ok) throw new Error(data.error || 'Server error');
+
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 400));
+    s1_showResults(data, clientFileNames);
+  } catch (err) {
+    clearInterval(tick);
+    proc.classList.add('hidden');
+    proc.classList.remove('flex');
+    document.getElementById('s1-submit-btn').classList.remove('hidden');
+    const errBox = document.getElementById('s1-error');
+    errBox.classList.remove('hidden');
+    errBox.classList.add('flex');
+    document.getElementById('s1-error-msg').textContent = err.message;
+    lucide.createIcons();
+  }
+}
+
+function s1_showResults(data, fileNames){
+  fileNames = fileNames || [];
+  window._s1JobId = data.jobId;
+  window._s1RestoredImages = (data.images || []).map(s1_normalizeImage);
+  window._s1UpscaledImages = null;
+  window._s1ClientFileNames = fileNames;
+
+  const proc = document.getElementById('s1-processing');
+  proc.classList.add('hidden');
+  proc.classList.remove('flex');
+
+  const results = document.getElementById('s1-results');
+  results.classList.remove('hidden');
+  document.getElementById('s1-result-count').textContent =
+    `${window._s1RestoredImages.length} restored image(s) · Step 2 ready`;
+
+  const comparisons = document.getElementById('s1-comparisons');
+  comparisons.innerHTML = '';
+  for (const [i, img] of window._s1RestoredImages.entries()) {
+    const displayName = fileNames[i] || `Image ${i + 1}`;
+    const card = document.createElement('div');
+    card.className = 'bg-panelDark border border-panelBorder rounded-2xl p-4';
+    card.innerHTML = `
+      <p class="text-white font-bold text-xs mb-3 truncate" title="${displayName}">${displayName}</p>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <p class="text-textMuted text-[10px] font-bold mb-1.5 text-center">Original</p>
+          <img src="${img.inputUrl}" class="compare-img" alt="original" onerror="this.style.display='none'">
+        </div>
+        <div>
+          <p class="text-[#f59e0b] text-[10px] font-bold mb-1.5 text-center">Restoration</p>
+          <img src="${img.restoredUrl}" class="compare-img" alt="restored" onerror="this.style.background='#2a1c00'">
+        </div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <a href="${img.restoredJpgUrl || '#'}" download class="dl-btn primary flex-1 justify-center ${img.restoredJpgUrl ? '' : 'pointer-events-none opacity-50'}">JPG</a>
+        <a href="${img.restoredUrl || '#'}" download class="dl-btn flex-1 justify-center ${img.restoredUrl ? '' : 'pointer-events-none opacity-50'}">PNG</a>
+        <a href="${img.restoredTiffUrl || '#'}" download class="dl-btn flex-1 justify-center ${img.restoredTiffUrl ? '' : 'pointer-events-none opacity-50'}">TIFF</a>
+      </div>`;
+    comparisons.appendChild(card);
+  }
+
+  document.getElementById('s1-upscale-panel').classList.remove('hidden');
+  document.getElementById('s1-upscale-processing').classList.add('hidden');
+  document.getElementById('s1-upscale-processing').classList.remove('flex');
+  document.getElementById('s1-upscale-error').classList.add('hidden');
+  document.getElementById('s1-upscale-results').classList.add('hidden');
+
+  const upscaleBtn = document.getElementById('s1-upscale-btn');
+  upscaleBtn.disabled = false;
+  upscaleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    upscaleBtn.innerHTML = '<i data-lucide="expand" class="w-4 h-4"></i> Upscale Images';
+
+  const dlContainer = document.getElementById('s1-downloads');
+  dlContainer.innerHTML = '';
+  const icons = { pdf:'PDF', json:'JSON', docx:'DOCX', png:'PNG', jpg:'JPG', tiff:'TIFF' };
+  for(const f of data.outputFiles || []){
+    const ext = f.ext || f.url.split('.').pop();
+    const a = document.createElement('a');
+    a.href = f.url;
+    a.download = '';
+    a.className = ['pdf','docx','json'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
+    a.innerHTML = `<span>${icons[ext] || 'FILE'}</span><span>${f.label}</span>`;
+    dlContainer.appendChild(a);
+  }
+
+  lucide.createIcons();
+}
+
+async function s1_upscale() {
+  if (!window._s1JobId || !window._s1RestoredImages || !window._s1RestoredImages.length) {
+    alert('Run step 1 first.');
+    return;
+  }
+
+  const upscaleBtn = document.getElementById('s1-upscale-btn');
+  const proc = document.getElementById('s1-upscale-processing');
+  const errBox = document.getElementById('s1-upscale-error');
+  const results = document.getElementById('s1-upscale-results');
+
+  upscaleBtn.disabled = true;
+  upscaleBtn.classList.add('opacity-50', 'cursor-not-allowed');
+  errBox.classList.add('hidden');
+  results.classList.add('hidden');
+  proc.classList.remove('hidden');
+  proc.classList.add('flex');
+
+  try {
+    const payload = {
+      images: window._s1RestoredImages.map((img, index) => ({
+        index,
+        restoredUrl: img.restoredUrl,
+      })),
+    };
+
+    const res = await fetch(`/api/service1/upscale/${window._s1JobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await s1_readApiResponse(res);
+    if (!res.ok) throw new Error(data.error || 'Upscaling failed');
+
+    window._s1UpscaledImages = (data.images || []).map(s1_normalizeImage);
+
+    proc.classList.add('hidden');
+    proc.classList.remove('flex');
+    results.classList.remove('hidden');
+
+    const comparisons = document.getElementById('s1-upscale-comparisons');
+    comparisons.innerHTML = '';
+    for (const img of window._s1UpscaledImages) {
+      const original = window._s1RestoredImages[img.index] || {};
+      const displayName = (window._s1ClientFileNames || [])[img.index] || `Image ${img.index + 1}`;
+      const card = document.createElement('div');
+      card.className = 'bg-panelDark border border-panelBorder rounded-2xl p-4';
+      card.innerHTML = `
+        <p class="text-white font-bold text-xs mb-3 truncate" title="${displayName}">${displayName}</p>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <p class="text-textMuted text-[10px] font-bold mb-1.5 text-center">Original</p>
+            <img src="${img.inputUrl || original.inputUrl}" class="compare-img" alt="original" onerror="this.style.display='none'">
+          </div>
+          <div>
+            <p class="text-[#f59e0b] text-[10px] font-bold mb-1.5 text-center">Restoration</p>
+            <img src="${img.restoredUrl || original.restoredUrl}" class="compare-img" alt="restored" onerror="this.style.background='#2a1c00'">
+          </div>
+          <div>
+            <p class="text-[#38bdf8] text-[10px] font-bold mb-1.5 text-center">Upscaling</p>
+            <img src="${img.upscaledUrl}" class="compare-img" alt="upscaled" onerror="this.style.background='#1c3554'">
+          </div>
+        </div>`;
+      comparisons.appendChild(card);
+    }
+
+    const dlContainer = document.getElementById('s1-upscale-downloads');
+    dlContainer.innerHTML = '';
+    for (const f of data.outputFiles || []) {
+      const a = document.createElement('a');
+      a.href = f.url;
+      a.download = '';
+      a.className = ['pdf', 'docx', 'json'].includes(f.ext) ? 'dl-btn primary' : 'dl-btn';
+      a.innerHTML = `<span>${(f.ext || '').toUpperCase() || 'FILE'}</span><span>${f.label}</span>`;
+      dlContainer.appendChild(a);
+    }
+
+    document.getElementById('s1-result-count').textContent =
+      `${window._s1RestoredImages.length} restored image(s) · ${window._s1UpscaledImages.length} upscaled image(s)`;
+
+    upscaleBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Upscaling Complete';
+    lucide.createIcons();
+  } catch (err) {
+    proc.classList.add('hidden');
+    proc.classList.remove('flex');
+    errBox.classList.remove('hidden');
+    document.getElementById('s1-upscale-error-msg').textContent = err.message;
+    upscaleBtn.disabled = false;
+    upscaleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    lucide.createIcons();
+  }
+}
+
+function s1_reset(){
+  document.getElementById('s1-results').classList.add('hidden');
+  document.getElementById('s1-error').classList.add('hidden');
+  document.getElementById('s1-submit-btn').classList.remove('hidden');
+  document.getElementById('file-s1').value = '';
+  document.getElementById('files-s1').innerHTML = '';
+  document.getElementById('files-s1').classList.add('hidden');
+  document.getElementById('s1-progress-bar').style.width = '5%';
+  document.getElementById('s1-comparisons').innerHTML = '';
+  document.getElementById('s1-downloads').innerHTML = '';
+  document.getElementById('s1-upscale-panel').classList.add('hidden');
+  document.getElementById('s1-upscale-processing').classList.add('hidden');
+  document.getElementById('s1-upscale-processing').classList.remove('flex');
+  document.getElementById('s1-upscale-error').classList.add('hidden');
+  document.getElementById('s1-upscale-results').classList.add('hidden');
+  document.getElementById('s1-upscale-comparisons').innerHTML = '';
+  document.getElementById('s1-upscale-downloads').innerHTML = '';
+  window._s1JobId = null;
+  window._s1RestoredImages = null;
+  window._s1UpscaledImages = null;
+  window._s1ClientFileNames = null;
+  s1_initStepLabels();
+  lucide.createIcons();
+}
+
 async function s3_submit() {
   const submitBtn  = document.getElementById('s3-submit-btn');
   const proc       = document.getElementById('s3-processing');

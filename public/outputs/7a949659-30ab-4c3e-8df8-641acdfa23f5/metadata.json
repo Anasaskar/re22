@@ -1,0 +1,25 @@
+{
+  "jobId": "7a949659-30ab-4c3e-8df8-641acdfa23f5",
+  "service": 1,
+  "stage": "upscale_complete",
+  "pipeline": "google/nano-banana-2 -> nightmareai/real-esrgan x4",
+  "processedAt": "2026-03-13T01:37:40.929Z",
+  "step1CompletedAt": "2026-03-13T01:36:46.830Z",
+  "upscaleCompleted": true,
+  "imageCount": 1,
+  "prompt": "Restore this historic building realistically. Reconstruct missing architectural sections, repair cracks and collapsed walls, preserve the original heritage style, maintain the same camera angle and lighting, keep authentic materials and traditional decorative details, do not modernize the building.",
+  "images": [
+    {
+      "originalName": "قبل الترميم.png",
+      "inputUrl": "/uploads/2dd91b7f-5d44-4b56-9983-df20ac5d0e7c.png",
+      "inputSizeKB": 2118,
+      "restoredUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_restored.png",
+      "restoredJpgUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_restored.jpg",
+      "restoredTiffUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_restored.tiff",
+      "upscaledUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_upscaled.png",
+      "upscaledJpgUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_upscaled.jpg",
+      "upscaledTiffUrl": "/outputs/7a949659-30ab-4c3e-8df8-641acdfa23f5/image_01_upscaled.tiff"
+    }
+  ],
+  "step2CompletedAt": "2026-03-13T01:37:40.929Z"
+}

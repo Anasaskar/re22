@@ -1,0 +1,13 @@
+{
+  "jobId": "a7d00d23-aca2-4c88-a3f8-4ad8e6f05272",
+  "service": 1,
+  "pipeline": "google/nano-banana-2 → nightmareai/real-esrgan ×4",
+  "processedAt": "2026-03-13T00:59:05.391Z",
+  "imageCount": 1,
+  "images": [
+    {
+      "originalName": "قبل الترميم.png",
+      "inputSizeKB": 2118
+    }
+  ]
+}

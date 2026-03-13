@@ -23,6 +23,8 @@ const SERVICE_02_DEFINITION = 'Generate high-quality architectural rehabilitatio
 const DEFAULT_VIEW_COUNT = 8;
 const RASTER_REFERENCE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.webp']);
 const DOCUMENT_REFERENCE_EXTENSIONS = new Set(['.pdf', '.ppt', '.pptx']);
+const SERVICE_02_IMAGE_MODEL = 'google/nano-banana-2';
+const SERVICE_02_IMAGE_RESOLUTION = '1K';
 
 function summarizeReferenceInputs(files = []) {
   const summary = {
@@ -72,6 +74,19 @@ function validateReferenceFiles(files = []) {
   }
 
   return null;
+}
+
+function imagePathToDataUri(filePath) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+  return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
+}
+
+function buildReferenceImageInputs(imagePaths = [], limit = 10) {
+  return (imagePaths || [])
+    .filter(p => RASTER_REFERENCE_EXTENSIONS.has(path.extname(p).toLowerCase()))
+    .slice(0, limit)
+    .map(imagePathToDataUri);
 }
 
 function getFloorCount(floors) {
@@ -150,11 +165,7 @@ async function analyzeStyleWithGPT4o(imagePaths, style, buildingType) {
   console.log(`[GPT-4o/Replicate] Analyzing ${rasterPaths.length} raster reference image(s) for rehabilitation context...`);
 
   // Convert local image files to base64 data URIs for Replicate
-  const imageInputs = rasterPaths.slice(0, 3).map(p => {
-    const ext = path.extname(p).slice(1).toLowerCase();
-    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-    return `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`;
-  });
+  const imageInputs = buildReferenceImageInputs(rasterPaths, 3);
 
   const output = await replicate.run('openai/gpt-4o', {
     input: {
@@ -823,7 +834,7 @@ async function buildExcel(results, style, funcKey, area, floors, buildingName, x
     ['Number of Floors',  floors || '—'],
     ['Views Generated',   `${results.length} views`],
     ['Generated At',      new Date().toLocaleString()],
-    ['Model',             'stability-ai/sdxl (Expert Quality)'],
+    ['Model',             `${SERVICE_02_IMAGE_MODEL} (${SERVICE_02_IMAGE_RESOLUTION})`],
   ];
   for (const [k, v] of fields) {
     const row = sum.addRow([k, v]);
@@ -1323,9 +1334,11 @@ router.post('/generate', (req, res, next) => {
       console.warn('         ⚠ GPT-4o analysis skipped:', e.message);
     }
 
+    const referenceImageInputs = buildReferenceImageInputs(refImagePaths, 10);
+
     for (const [i, view] of viewsToRun.entries()) {
       const vT0 = Date.now();
-      console.log(`\n┌─ [${i+1}/${viewCount}] ▶ SDXL | ${view.labelEn} ─────────────────`);
+      console.log(`\n┌─ [${i+1}/${viewCount}] ▶ Nano Banana 2 | ${view.labelEn} ───────────`);
 
       // ── STEP 3: GPT-4o/Replicate custom prompt engineering ───────────────
       let finalPrompt = null;
@@ -1343,33 +1356,29 @@ router.post('/generate', (req, res, next) => {
         + (prompt ? `, ${prompt}` : '');
 
 
+      const generationPrompt = `${fluxPrompt}. Avoid: ${NEGATIVE_PROMPT}.`;
       const aspectRatio = view.width > view.height ? '16:9' : '3:4';
+      const shouldUseReferenceImages = !['floorplan', 'sectional'].includes(view.id);
       console.log(`│  Prompt: "${fluxPrompt.substring(0, 100)}..."`);
       console.log(`│  AR    : ${aspectRatio}  |  output: PNG`);
+      console.log(`│  Refs  : ${shouldUseReferenceImages ? referenceImageInputs.length : 0}`);
       console.log('│  Calling Replicate...');
-
       let imgUrl;
       try {
         const output = await replicate.run(
-          'stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
+          SERVICE_02_IMAGE_MODEL,
           {
             input: {
               // ── Prompt ────────────────────────────────
-              prompt:          fluxPrompt,
-              negative_prompt: NEGATIVE_PROMPT,
-              // ── Aspect ratio (--ar 16:9 or --ar 3:4) ──
-              width:           view.width,    // 1344 (16:9) or 1024 (3:4)
-              height:          view.height,   //  768 (16:9) or 1365 (3:4)
-              // ── Quality (--q 2 = highest) ──────────────
-              num_inference_steps: 100,
-              guidance_scale:      7.5,
-              // ── Style raw (no artistic refiner) ────────
-              refine:              'no_refiner',
-              scheduler:           'K_EULER',
-              // ── Output ─────────────────────────────────
-              num_outputs:         1,
-              apply_watermark:     false,
-              disable_safety_checker: true,
+              prompt: generationPrompt,
+              aspect_ratio: aspectRatio,
+              // ── Nano Banana output controls ──
+              resolution: SERVICE_02_IMAGE_RESOLUTION,
+              output_format: 'png',
+              // ── Optional reference images ──────────────
+              ...(shouldUseReferenceImages && referenceImageInputs.length
+                ? { image_input: referenceImageInputs }
+                : {}),
             },
           }
         );
@@ -1378,8 +1387,8 @@ router.post('/generate', (req, res, next) => {
         console.log(`│  ✓ Done in ${((Date.now()-vT0)/1000).toFixed(1)}s`);
         console.log(`│  URL: ${imgUrl.substring(0, 70)}...`);
       } catch (e) {
-        console.error(`│  ✗ SDXL failed: ${e.message}`);
-        throw new Error(`SDXL generation failed for ${view.labelEn}: ${e.message}`);
+        console.error(`│  ✗ Nano Banana 2 failed: ${e.message}`);
+        throw new Error(`Nano Banana 2 generation failed for ${view.labelEn}: ${e.message}`);
       }
 
 
@@ -1463,7 +1472,8 @@ router.post('/generate', (req, res, next) => {
       jobId, service: 2,
       serviceName: SERVICE_02_NAME,
       serviceDefinition: SERVICE_02_DEFINITION,
-      model: 'stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc',
+      model: SERVICE_02_IMAGE_MODEL,
+      modelResolution: SERVICE_02_IMAGE_RESOLUTION,
       style, buildingType, area, floors: floorCount, buildingName,
       viewsGenerated: viewCount,
       referenceInputs: referenceSummary,

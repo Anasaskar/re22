@@ -239,10 +239,10 @@ select.field-input option{background:#102033}
         <!-- Optional reference images -->
         <p class="text-textMuted text-xs font-bold mb-2">صور مرجعية (اختياري)</p>
         <div class="upload-zone" onclick="triggerUpload('file-s2')">
-          <input type="file" id="file-s2" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf" multiple onchange="handleFiles(this,'s2')">
+          <input type="file" id="file-s2" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf,.ppt,.pptx" multiple onchange="handleFiles(this,'s2')">
           <i data-lucide="building-2" class="w-10 h-10 text-accent/50 mb-2"></i>
           <p class="text-white font-bold text-sm mb-1">صور أو مخططات المنشأة الأصلية (اختياري)</p>
-          <p class="text-textMuted text-xs">JPG · PNG · TIFF · PDF — حتى 50 MB للملف</p>
+          <p class="text-textMuted text-xs">JPG · PNG · TIFF · PDF · PPT/PPTX — 50 MB للصور و100 MB للملفات</p>
         </div>
         <div id="files-s2" class="mt-3 space-y-2 hidden"></div>
       </div>
@@ -333,7 +333,8 @@ select.field-input option{background:#102033}
         <div>
           <label class="field-label">عدد الزوايا المطلوبة</label>
           <select id="s2-views" class="field-input">
-            <option value="4">4 زوايا (الواجهات الأربع)</option>
+            <option value="12">12 Views (Extended)</option>
+            <option value="10">10 Views</option>
             <option value="8" selected>8 زوايا (شاملة)</option>
           </select>
         </div>
@@ -406,15 +407,15 @@ select.field-input option{background:#102033}
     <!-- S3: Geospatial Analysis -->
     <div id="panel-s3" class="panel max-w-3xl mx-auto">
       <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
-        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 03</span><span class="text-textMuted text-sm">/ البيانات الجغرافية والمكانية</span></div>
+        <div class="flex items-center gap-2 mb-4"><span class="text-accent font-black text-sm">الخدمة 03</span><span class="text-textMuted text-sm">/ التحليل الجغرافي واستعادة النسيج العمراني</span></div>
 
         <p class="text-textMuted text-xs font-bold mb-2">ملفات GIS والبيانات الجغرافية</p>
         <div class="upload-zone mb-4" onclick="triggerUpload('file-s3-geo')">
-          <input type="file" id="file-s3-geo" accept=".kml,.kmz,.shp,.geojson,.json" multiple onchange="handleFiles(this,'s3-geo')">
+          <input type="file" id="file-s3-geo" accept=".kml,.kmz,.shp,.geojson,.json,.zip" multiple onchange="handleFiles(this,'s3-geo')">
           <i data-lucide="map-pin" class="w-10 h-10 text-accent/50 mb-2"></i>
           <p class="text-white font-bold text-sm mb-3">ملفات GIS والإحداثيات</p>
           <div class="flex flex-wrap gap-2 justify-center">
-            <span class="tag">KML / KMZ</span><span class="tag">SHP</span><span class="tag">GeoJSON</span>
+            <span class="tag">KML / KMZ</span><span class="tag">SHP / ZIP</span><span class="tag">GeoJSON</span><span class="tag bg-accent/10 border-accent/30 text-accent">100 MB</span>
           </div>
         </div>
         <div id="files-s3-geo" class="mb-4 space-y-2 hidden"></div>
@@ -425,18 +426,18 @@ select.field-input option{background:#102033}
           <i data-lucide="satellite-dish" class="w-10 h-10 text-accent/50 mb-2"></i>
           <p class="text-white font-bold text-sm mb-3">صور جوية · خرائط تاريخية</p>
           <div class="flex flex-wrap gap-2 justify-center">
-            <span class="tag">JPG / PNG / TIFF</span><span class="tag">PDF</span>
+            <span class="tag">JPG / PNG / TIFF</span><span class="tag">PDF</span><span class="tag bg-accent/10 border-accent/30 text-accent">50 MB images / 100 MB PDF</span>
           </div>
         </div>
         <div id="files-s3-aerial" class="mb-4 space-y-2 hidden"></div>
 
         <p class="text-textMuted text-xs font-bold mb-2">بيانات التضاريس (اختياري)</p>
         <div class="upload-zone" onclick="triggerUpload('file-s3-dem')">
-          <input type="file" id="file-s3-dem" accept=".tif,.tiff,.asc,.las,.laz" multiple onchange="handleFiles(this,'s3-dem')">
+          <input type="file" id="file-s3-dem" accept=".tif,.tiff,.asc,.dem,.las,.laz" multiple onchange="handleFiles(this,'s3-dem')">
           <i data-lucide="mountain" class="w-10 h-10 text-accent/50 mb-2"></i>
           <p class="text-white font-bold text-sm mb-3">DEM · LiDAR (اختياري)</p>
           <div class="flex flex-wrap gap-2 justify-center">
-            <span class="tag">TIF / ASC</span><span class="tag">LAS / LAZ</span>
+            <span class="tag">TIF / ASC / DEM</span><span class="tag">LAS / LAZ</span><span class="tag bg-accent/10 border-accent/30 text-accent">100 MB</span>
           </div>
         </div>
         <div id="files-s3-dem" class="mt-3 space-y-2 hidden"></div>
@@ -457,7 +458,7 @@ select.field-input option{background:#102033}
             <div class="flex flex-wrap gap-2 justify-center">
               <span class="tag" style="border-color:rgba(192,132,252,0.4);color:#c084fc">JPG / PNG / TIFF</span>
               <span class="tag" style="border-color:rgba(192,132,252,0.4);color:#c084fc">GLB / OBJ / FBX</span>
-              <span class="tag" style="border-color:rgba(192,132,252,0.4);color:#c084fc">STL</span>
+              <span class="tag" style="border-color:rgba(192,132,252,0.4);color:#c084fc">STL</span><span class="tag" style="border-color:rgba(192,132,252,0.4);color:#c084fc">50 MB</span>
             </div>
           </div>
           <div id="files-s3-restored" class="mt-3 space-y-2 hidden"></div>
@@ -957,7 +958,8 @@ async function s2_submit(){
 
   // Detail text rotator
   const views = ['الواجهة الأمامية','الواجهة الخلفية','الواجهة اليسرى','الواجهة اليمنى',
-                 'المنظور الهوائي','الفناء الداخلي','المسقط الأفقي','المنظور الليلي'];
+                 'المنظور الهوائي','الفناء الداخلي','المسقط الأفقي','المنظور الليلي',
+                 'Street Perspective','Facade Detail','Adaptive Reuse Interior','Sectional Perspective'];
   let vi = 0;
   const detail = document.getElementById('s2-proc-detail');
   const rotate = setInterval(() => {
@@ -1480,8 +1482,8 @@ async function s3_submit() {
     'الخطوة 3: SDXL — توليد منظور مستوى الشارع...',
     'الخطوة 4: SDXL — توليد المقارنة التاريخية...',
     'الخطوة 5: SDXL — توليد رؤية الترميم المستقبلية...',
-    'بناء الخرائط: KML · GeoJSON · DXF · SVG...',
-    'إنشاء التقارير: Excel · Word · PDF...',
+    'بناء الخرائط: KML · KMZ · GeoJSON · DXF · SVG · AI...',
+    'إنشاء التقارير: Excel · Word · PDF · Urban Plan PDF...',
   ];
   let stepIndex = 0;
   const tick = setInterval(() => {
@@ -1588,14 +1590,14 @@ function s3_showResults(data) {
   dlContainer.innerHTML = '';
   const icons = {
     pdf:'📄', docx:'📝', xlsx:'📊', json:'🗂️',
-    kml:'🌍', geojson:'📌', dxf:'📐', svg:'🗺️', png:'🖼', jpg:'🖼', tiff:'🖼'
+    kml:'🌍', kmz:'🗺️', geojson:'📌', dxf:'📐', svg:'🗺️', ai:'🎨', html:'🌐', png:'🖼', jpg:'🖼', tiff:'🖼'
   };
   for (const f of (data.outputFiles || [])) {
     const ext = f.ext || f.url.split('.').pop();
     const a = document.createElement('a');
     a.href = f.url;
     a.download = '';
-    a.className = ['pdf','docx','kml','geojson'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
+    a.className = ['pdf','docx','kml','kmz','geojson','html'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${f.icon || icons[ext] || '📁'}</span><span>${f.label}</span>`;
     dlContainer.appendChild(a);
   }

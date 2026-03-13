@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const Replicate  = require('replicate');
 const https      = require('https');
 const http       = require('http');
+const zlib       = require('zlib');
 const {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
 } = require('docx');
@@ -19,6 +20,14 @@ const turf       = require('@turf/turf');
 const router    = express.Router();
 const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
 
+const SERVICE_03_NAME = 'Geospatial Analysis & Urban Fabric Restoration';
+const SERVICE_03_DEFINITION = 'Analyze, reconstruct, and visualize the urban environment surrounding heritage assets at the district or neighborhood scale. Service 03 focuses on streets, open spaces, terrain, spatial relationships, district boundaries, and the historical urban fabric rather than a single building only. It compares historical and current conditions, integrates restored heritage buildings from earlier services, and generates geographically coherent restoration outputs for the wider urban context.';
+const GEO_REFERENCE_EXTENSIONS = new Set(['.kml', '.kmz', '.geojson', '.json', '.shp', '.zip']);
+const RASTER_REFERENCE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.webp']);
+const HISTORICAL_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
+const TERRAIN_REFERENCE_EXTENSIONS = new Set(['.tif', '.tiff', '.asc', '.las', '.laz', '.dem']);
+const RESTORATION_ASSET_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.pdf', '.glb', '.gltf', '.fbx', '.obj', '.stl']);
+
 // ── Storage ───────────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '../../public/uploads');
 const OUTPUTS_DIR = path.join(__dirname, '../../public/outputs');
@@ -28,7 +37,146 @@ const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
   filename: (_, file, cb) => cb(null, `s3_${Date.now()}_${uuidv4().slice(0,8)}${path.extname(file.originalname)}`),
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+
+function summarizeService3Inputs(files = {}) {
+  const geoFiles = files['geoFiles'] || [];
+  const aerialFiles = files['aerialImages'] || [];
+  const demFiles = files['demFiles'] || [];
+  const restoredFiles = files['restoredBuildings'] || [];
+
+  return {
+    geoFiles: geoFiles.map(f => ({ name: f.originalname, ext: path.extname(f.originalname).toLowerCase(), size: f.size || 0 })),
+    aerialFiles: aerialFiles.map(f => ({ name: f.originalname, ext: path.extname(f.originalname).toLowerCase(), size: f.size || 0 })),
+    demFiles: demFiles.map(f => ({ name: f.originalname, ext: path.extname(f.originalname).toLowerCase(), size: f.size || 0 })),
+    restoredFiles: restoredFiles.map(f => ({ name: f.originalname, ext: path.extname(f.originalname).toLowerCase(), size: f.size || 0 })),
+  };
+}
+
+function validateService3Inputs(files = {}) {
+  const groups = [
+    ...(files['geoFiles'] || []),
+    ...(files['aerialImages'] || []),
+    ...(files['demFiles'] || []),
+    ...(files['restoredBuildings'] || []),
+  ];
+
+  for (const file of groups) {
+    const ext = path.extname(file.originalname || file.path || '').toLowerCase();
+    const size = file.size || 0;
+
+    if ((RASTER_REFERENCE_EXTENSIONS.has(ext) || RESTORATION_ASSET_EXTENSIONS.has(ext)) && size > 50 * 1024 * 1024) {
+      return `File "${file.originalname}" exceeds the 50 MB image/asset limit.`;
+    }
+    if ((GEO_REFERENCE_EXTENSIONS.has(ext) || HISTORICAL_DOCUMENT_EXTENSIONS.has(ext) || TERRAIN_REFERENCE_EXTENSIONS.has(ext)) && size > 100 * 1024 * 1024) {
+      return `File "${file.originalname}" exceeds the 100 MB geospatial/document limit.`;
+    }
+  }
+
+  return null;
+}
+
+function classifyRestorationAsset(ext) {
+  const normalized = String(ext || '').toLowerCase();
+  if (['.glb', '.gltf', '.fbx', '.obj', '.stl'].includes(normalized)) return '3d-model';
+  if (['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.webp'].includes(normalized)) return 'restored-image';
+  if (normalized === '.pdf') return 'reference-document';
+  return 'supporting-asset';
+}
+
+function summarizeRestorationAssets(restoredFiles = []) {
+  const assets = restoredFiles.map((file, index) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    return {
+      id: `asset_${String(index + 1).padStart(2, '0')}`,
+      name: file.originalname,
+      sizeKB: Math.round((file.size || 0) / 1024),
+      type: file.mimetype,
+      ext: ext.slice(1),
+      assetRole: classifyRestorationAsset(ext),
+    };
+  });
+
+  const counts = assets.reduce((acc, asset) => {
+    acc[asset.assetRole] = (acc[asset.assetRole] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    totalAssets: assets.length,
+    imageAssets: counts['restored-image'] || 0,
+    modelAssets: counts['3d-model'] || 0,
+    documentAssets: counts['reference-document'] || 0,
+    assets,
+  };
+}
+
+function summarizeTerrainInputs(demFiles = [], districtContext = {}) {
+  const exts = demFiles.map(f => path.extname(f.originalname || '').toLowerCase());
+  const hasRasterDem = exts.some(ext => ['.tif', '.tiff', '.asc', '.dem'].includes(ext));
+  const hasPointCloud = exts.some(ext => ['.las', '.laz'].includes(ext));
+  const radius = districtContext.radius || 0.005;
+
+  return {
+    terrainFiles: demFiles.length,
+    hasRasterDem,
+    hasPointCloud,
+    terrainMode: demFiles.length ? 'provided-terrain-data' : 'inferred-from-site-context',
+    slopeCharacter: radius < 0.003 ? 'compact / relatively flat district' : radius < 0.01 ? 'mixed relief district' : 'broad district with more noticeable terrain variation',
+    notes: demFiles.length
+      ? 'Terrain references were supplied and should influence district-wide spatial logic, streets, and open-space reconstruction.'
+      : 'No terrain files were supplied, so terrain influence is inferred from district scale and architectural context.',
+  };
+}
+
+function buildRestorationAssetFeatures(restorationAssetSummary, center, radius) {
+  const [lng, lat] = center;
+  const spacing = Math.max(radius * 0.18, 0.00035);
+
+  return (restorationAssetSummary.assets || []).map((asset, index) => {
+    const angle = ((index % 8) / 8) * Math.PI * 2;
+    const ring = Math.floor(index / 8) + 1;
+    const distance = spacing * ring;
+    const assetLng = lng + Math.cos(angle) * distance;
+    const assetLat = lat + Math.sin(angle) * distance;
+
+    return {
+      type: 'Feature',
+      properties: {
+        id: asset.id,
+        name: asset.name,
+        type: 'restoration_asset',
+        assetRole: asset.assetRole,
+        sourceService: 'Service 01/02 reusable heritage output',
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [assetLng, assetLat],
+      },
+    };
+  });
+}
+
+function buildDistrictRestorationSummary(districtContext, urbanAnalysis, terrainSummary, restorationAssetSummary, inputSummary) {
+  return {
+    boundarySource: districtContext.hasRealData ? 'parsed GIS / district boundary data' : 'coordinate-based fallback boundary',
+    districtScale: districtContext.radius < 0.003 ? 'compact district' : districtContext.radius < 0.01 ? 'neighborhood district' : 'extended urban quarter',
+    streetCount: districtContext.realStreets.length,
+    buildingCount: districtContext.realBuildings.length,
+    openSpaceCount: districtContext.realOpenSpaces.length,
+    pedestrianRouteCount: 0,
+    publicSpaceCount: 0,
+    terrainMode: terrainSummary.terrainMode,
+    historicalComparisonBasis: inputSummary.aerialFiles.length ? 'historical imagery / aerial references provided' : 'limited historical imagery, relying more on district logic and supporting files',
+    restorationAssetCount: restorationAssetSummary.totalAssets,
+    restorationAssetIntegration: restorationAssetSummary.totalAssets
+      ? 'Restored heritage assets from earlier services are treated as district-scale contextual restoration elements and reinserted into the urban fabric.'
+      : 'No restored building assets were supplied; Service 03 reconstructs the district using geospatial and historical context only.',
+    planningGoal: urbanAnalysis?.urbanPattern
+      ? `Restore the district while preserving its ${urbanAnalysis.urbanPattern.toLowerCase()} urban fabric logic, streets, and open spaces.`
+      : 'Restore the district while preserving its historic urban fabric, street hierarchy, and open-space structure.',
+  };
+}
 
 // ── Helper: download URL → file ───────────────────────────────────────────
 function downloadFile(url, dest) {
@@ -174,11 +322,390 @@ function buildUrbanViews(districtName, archStyle, urbanAnalysis) {
   ];
 }
 
+function buildDistrictUrbanViews(districtName, archStyle, urbanAnalysis, districtSummary, terrainSummary, restorationAssetSummary) {
+  const name = districtName || 'historic district';
+  const stylDetail = STYLE_DETAILS[archStyle] || STYLE_DETAILS['Ù†Ø¬Ø¯ÙŠ'];
+  const terrainCue = terrainSummary?.hasPointCloud || terrainSummary?.hasRasterDem
+    ? `real terrain-informed district topography, ${terrainSummary.slopeCharacter}`
+    : `terrain-aware urban setting, ${terrainSummary?.slopeCharacter || 'heritage site topography respected'}`;
+  const assetCue = restorationAssetSummary?.totalAssets
+    ? 'restored heritage assets from Service 01 and Service 02 placed back into the district in believable positions'
+    : 'district-wide restoration assets reconstructed coherently within the urban fabric';
+  const boundaryCue = districtSummary?.boundarySource
+    ? `district boundary and urban organization derived from ${districtSummary.boundarySource}`
+    : 'district-scale geospatial logic';
+
+  return [
+    {
+      id: 'aerial',
+      labelAr: 'Ø§Ù„Ù…Ù†Ø¸ÙˆØ± Ø§Ù„Ù‡ÙˆØ§Ø¦ÙŠ Ù„Ù„Ø­ÙŠ',
+      labelEn: 'Aerial Urban Overview',
+      prompt: `Generate a realistic district-scale aerial restoration visualization of ${name}. Preserve the historical urban fabric, streets, open spaces, spatial relationships between buildings, and the wider neighborhood character. ${stylDetail}, ${terrainCue}, ${assetCue}, ${boundaryCue}. Show the overall massing, roofscape, courtyards, paths, and public spaces clearly. The result must feel geographically coherent, historically respectful, and presentation-ready.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'street',
+      labelAr: 'Ù…Ù†Ø¸ÙˆØ± Ø§Ù„Ø´Ø§Ø±Ø¹ Ø§Ù„ØªØ±Ø§Ø«ÙŠ',
+      labelEn: 'Heritage Street Level',
+      prompt: `Generate a realistic street-level view within the restored heritage district of ${name}. Focus on the wider urban context rather than a single isolated building: connected facades, pedestrian routes, public edges, open-space sequence, and district-scale continuity. ${stylDetail}, ${terrainCue}, ${assetCue}. Include subtle human activity and calm environmental life while keeping the historic urban character clear.`,
+      width: 768, height: 1024,
+    },
+    {
+      id: 'comparison',
+      labelAr: 'Ø§Ù„Ù…Ù‚Ø§Ø±Ù†Ø© Ø§Ù„ØªØ§Ø±ÙŠØ®ÙŠØ©',
+      labelEn: 'Historical vs. Current Comparison',
+      prompt: `Generate a historical-versus-current urban comparison for the heritage district of ${name}. Clearly communicate the historical urban fabric, the current condition, and the district-scale restoration logic. ${stylDetail}, ${terrainCue}, ${boundaryCue}. Keep the comparison focused on streets, blocks, public spaces, and neighborhood structure rather than a single building facade.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'vision',
+      labelAr: 'Ø±Ø¤ÙŠØ© Ø§Ù„ØªØ±Ù…ÙŠÙ… Ø§Ù„Ù…Ø³ØªÙ‚Ø¨Ù„ÙŠØ©',
+      labelEn: 'Restoration Vision',
+      prompt: `Generate the restored future vision of the full heritage district of ${name}. Emphasize district-scale restoration rather than building-only restoration: pedestrian-friendly streets, coherent open spaces, integrated heritage assets, and believable geographic continuity across the neighborhood. ${stylDetail}, ${terrainCue}, ${assetCue}. The output should feel like a professional urban restoration concept made realistic.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'corner',
+      labelAr: 'Ø§Ù„Ù…Ù†Ø¸ÙˆØ± Ø§Ù„Ø²Ø§ÙˆÙŠ Ø§Ù„ØªÙØµÙŠÙ„ÙŠ',
+      labelEn: 'Corner Perspective View',
+      prompt: `Generate an urban corner perspective within ${name} that shows how multiple heritage buildings, intersecting streets, and public-space edges relate to each other. ${stylDetail}, ${terrainCue}, ${assetCue}. This should read as a believable part of a restored neighborhood block with strong spatial logic and district continuity.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'plaza',
+      labelAr: 'Ù…ÙŠØ¯Ø§Ù† Ø§Ù„Ù…Ø´Ø§Ø© Ø§Ù„Ø¹Ø§Ù…',
+      labelEn: 'Pedestrian Plaza',
+      prompt: `Generate a restored public plaza or open-space scene in the heart of ${name}. Highlight how streets, open spaces, building edges, and restored heritage assets work together at district scale. ${stylDetail}, ${terrainCue}, ${assetCue}. Include calm, realistic public activity without losing the heritage identity of the neighborhood.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'night',
+      labelAr: 'Ø§Ù„Ù…Ø´Ù‡Ø¯ Ø§Ù„Ù„ÙŠÙ„ÙŠ Ø§Ù„ØªØ±Ø§Ø«ÙŠ',
+      labelEn: 'Night Atmosphere',
+      prompt: `Generate a night-time district view of ${name} with warm heritage lighting, readable streets, and coherent building massing across the neighborhood. ${stylDetail}, ${terrainCue}, ${assetCue}. The lighting should support orientation, atmosphere, and realistic district-level restoration rather than a random cinematic effect.`,
+      width: 1344, height: 768,
+    },
+    {
+      id: 'facade',
+      labelAr: 'ØªÙØ§ØµÙŠÙ„ Ø§Ù„ÙˆØ§Ø¬Ù‡Ø© Ø§Ù„Ù…Ø±Ù…Ù…Ø©',
+      labelEn: 'Restored Facade Detail',
+      prompt: `Generate a facade-detail view that still belongs clearly to the restored urban district of ${name}. Show craftsmanship, materials, and restoration quality, but keep contextual cues of adjacent streets, building relationships, or neighborhood fabric so the image remains connected to the wider urban restoration story. ${stylDetail}, ${assetCue}.`,
+      width: 768, height: 1024,
+    },
+  ];
+}
+
 const NEGATIVE_PROMPT =
   'blurry, low quality, distorted, cartoon, sketch, anime, ugly, deformed, ' +
   'modern western architecture, skyscrapers, cars, noise, watermark, text overlay';
 
 // ══════════════════════════════════════════════════════════════════════════
+function extractZipEntries(buffer) {
+  const entries = [];
+  const eocdSignature = 0x06054b50;
+  const centralSignature = 0x02014b50;
+  const localSignature = 0x04034b50;
+  let eocdOffset = -1;
+
+  for (let i = buffer.length - 22; i >= 0; i--) {
+    if (buffer.readUInt32LE(i) === eocdSignature) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset === -1) return entries;
+
+  const centralDirOffset = buffer.readUInt32LE(eocdOffset + 16);
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  let offset = centralDirOffset;
+
+  for (let i = 0; i < totalEntries; i++) {
+    if (buffer.readUInt32LE(offset) !== centralSignature) break;
+    const compression = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.slice(offset + 46, offset + 46 + nameLength).toString('utf8');
+
+    if (buffer.readUInt32LE(localOffset) !== localSignature) {
+      offset += 46 + nameLength + extraLength + commentLength;
+      continue;
+    }
+
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.slice(dataStart, dataStart + compressedSize);
+
+    let data;
+    if (compression === 0) data = compressed;
+    else if (compression === 8) data = zlib.inflateRawSync(compressed);
+    else data = null;
+
+    if (data) {
+      entries.push({ name, data, compressedSize, uncompressedSize });
+    }
+
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+function parseKmzFile(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  const entries = extractZipEntries(buffer);
+  const kmlEntry = entries.find(entry => /\.kml$/i.test(entry.name));
+  return kmlEntry ? kmlEntry.data.toString('utf8') : '';
+}
+
+function parseKmlText(raw) {
+  const features = [];
+  const placemarks = raw.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
+
+  for (const placemark of placemarks) {
+    const name = (placemark.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || '').trim();
+    const coordBlocks = placemark.match(/<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi) || [];
+
+    for (const block of coordBlocks) {
+      const inner = block.replace(/<\/?coordinates[^>]*>/gi, '').trim();
+      const pairs = inner.split(/\s+/).map(pair => {
+        const parts = pair.split(',').map(Number);
+        return parts.length >= 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1]) ? [parts[0], parts[1]] : null;
+      }).filter(Boolean);
+
+      if (pairs.length === 1) {
+        features.push(turf.point(pairs[0], { name }));
+      } else if (pairs.length > 1) {
+        const first = pairs[0];
+        const last = pairs[pairs.length - 1];
+        const isClosed = first[0] === last[0] && first[1] === last[1];
+        features.push(
+          isClosed && pairs.length >= 4
+            ? turf.polygon([pairs], { name })
+            : turf.lineString(pairs, { name })
+        );
+      }
+    }
+  }
+
+  return features;
+}
+
+function parseShpBuffer(buffer) {
+  const features = [];
+  let offset = 100;
+
+  while (offset + 8 <= buffer.length) {
+    const recordLengthWords = buffer.readInt32BE(offset + 4);
+    const recordLengthBytes = recordLengthWords * 2;
+    const recordStart = offset + 8;
+    if (recordStart + recordLengthBytes > buffer.length) break;
+
+    const shapeType = buffer.readInt32LE(recordStart);
+    if (shapeType === 0) {
+      offset = recordStart + recordLengthBytes;
+      continue;
+    }
+
+    if (shapeType === 1 && recordLengthBytes >= 20) {
+      const x = buffer.readDoubleLE(recordStart + 4);
+      const y = buffer.readDoubleLE(recordStart + 12);
+      features.push(turf.point([x, y]));
+    } else if ((shapeType === 3 || shapeType === 5) && recordLengthBytes >= 44) {
+      const numParts = buffer.readInt32LE(recordStart + 36);
+      const numPoints = buffer.readInt32LE(recordStart + 40);
+      const partsOffset = recordStart + 44;
+      const pointsOffset = partsOffset + numParts * 4;
+      const parts = [];
+
+      for (let i = 0; i < numParts; i++) {
+        parts.push(buffer.readInt32LE(partsOffset + i * 4));
+      }
+
+      const pointSets = [];
+      for (let i = 0; i < numParts; i++) {
+        const start = parts[i];
+        const end = i + 1 < numParts ? parts[i + 1] : numPoints;
+        const coords = [];
+        for (let j = start; j < end; j++) {
+          const ptOffset = pointsOffset + j * 16;
+          coords.push([buffer.readDoubleLE(ptOffset), buffer.readDoubleLE(ptOffset + 8)]);
+        }
+        if (coords.length) pointSets.push(coords);
+      }
+
+      if (shapeType === 3) {
+        if (pointSets.length === 1) features.push(turf.lineString(pointSets[0]));
+        else features.push(turf.multiLineString(pointSets));
+      } else {
+        const polygons = pointSets.map(coords => {
+          const first = coords[0];
+          const last = coords[coords.length - 1];
+          if (!last || first[0] !== last[0] || first[1] !== last[1]) coords.push(first);
+          return coords;
+        }).filter(coords => coords.length >= 4);
+
+        if (polygons.length === 1) features.push(turf.polygon([polygons[0]]));
+        else if (polygons.length > 1) features.push(turf.multiPolygon(polygons.map(coords => [coords])));
+      }
+    }
+
+    offset = recordStart + recordLengthBytes;
+  }
+
+  return features;
+}
+
+function parseShpFile(filePath) {
+  return parseShpBuffer(fs.readFileSync(filePath));
+}
+
+function analyzeTerrainFiles(demFiles = []) {
+  const summary = {
+    minElevation: null,
+    maxElevation: null,
+    reliefMeters: null,
+    terrainSource: demFiles.length ? 'uploaded terrain references' : 'no explicit terrain dataset',
+    parsedFiles: [],
+  };
+
+  for (const file of demFiles) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    try {
+      if (ext === '.asc' || ext === '.dem') {
+        const raw = fs.readFileSync(file.path, 'utf8');
+        const values = raw.split(/\r?\n/).slice(6).join(' ').trim().split(/\s+/)
+          .map(Number).filter(v => Number.isFinite(v) && v > -9999);
+        if (values.length) {
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          summary.minElevation = summary.minElevation === null ? min : Math.min(summary.minElevation, min);
+          summary.maxElevation = summary.maxElevation === null ? max : Math.max(summary.maxElevation, max);
+          summary.parsedFiles.push({ name: file.originalname, type: 'ascii-grid', samples: values.length });
+        }
+      } else if (ext === '.las' && fs.statSync(file.path).size >= 227) {
+        const buffer = fs.readFileSync(file.path);
+        const minZ = buffer.readDoubleLE(195);
+        const maxZ = buffer.readDoubleLE(211);
+        if (Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+          summary.minElevation = summary.minElevation === null ? minZ : Math.min(summary.minElevation, minZ);
+          summary.maxElevation = summary.maxElevation === null ? maxZ : Math.max(summary.maxElevation, maxZ);
+          summary.parsedFiles.push({ name: file.originalname, type: 'las-header', samples: 1 });
+        }
+      } else {
+        summary.parsedFiles.push({ name: file.originalname, type: ext.slice(1) || 'terrain-reference', samples: 0 });
+      }
+    } catch (error) {
+      summary.parsedFiles.push({ name: file.originalname, type: 'unparsed', error: error.message });
+    }
+  }
+
+  if (summary.minElevation !== null && summary.maxElevation !== null) {
+    summary.reliefMeters = Number((summary.maxElevation - summary.minElevation).toFixed(2));
+  }
+
+  return summary;
+}
+
+function buildVisualAxes(center, radius, realStreets) {
+  const [lng, lat] = center;
+  if (realStreets.length >= 2) {
+    return realStreets.slice(0, 2).map((street, index) => ({
+      type: 'Feature',
+      properties: { type: 'visual_axis', name: `Visual Axis ${index + 1}` },
+      geometry: street.geometry,
+    }));
+  }
+
+  return [
+    turf.lineString([[lng - radius, lat], [lng + radius, lat]], { type: 'visual_axis', name: 'Primary Visual Axis' }),
+    turf.lineString([[lng, lat - radius], [lng, lat + radius]], { type: 'visual_axis', name: 'Secondary Visual Axis' }),
+  ];
+}
+
+function buildUrbanPlanPdf(districtName, districtArea, districtSummary, pdfPath) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A3', margin: 36 });
+    const out = fs.createWriteStream(pdfPath);
+    doc.pipe(out);
+
+    const name = districtName || 'Heritage District';
+    const side = 420;
+    const ox = 80;
+    const oy = 120;
+    doc.fontSize(20).font('Helvetica-Bold').text(`Urban Plan - ${name}`, { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).font('Helvetica').text(`Scale logic: ${districtSummary?.districtScale || 'district'} | Area: ${districtArea || 'N/A'} m2`, { align: 'center' });
+
+    doc.rect(ox, oy, side, side).strokeColor('#22384f').lineWidth(2).stroke();
+    doc.moveTo(ox, oy + side / 2).lineTo(ox + side, oy + side / 2).strokeColor('#d59d2d').lineWidth(3).stroke();
+    doc.moveTo(ox + side / 2, oy).lineTo(ox + side / 2, oy + side).strokeColor('#d59d2d').lineWidth(3).stroke();
+    doc.rect(ox + side * 0.42, oy + side * 0.42, side * 0.16, side * 0.16).fillAndStroke('#dceccf', '#7aa15f');
+    doc.fillColor('#0b1521').fontSize(11).text('Central Square', ox + side * 0.4, oy + side * 0.59);
+    doc.fillColor('#000000');
+
+    out.on('finish', resolve);
+    out.on('error', reject);
+    doc.end();
+  });
+}
+
+function buildAiFromSvg(svgPath, aiPath) {
+  fs.copyFileSync(svgPath, aiPath);
+}
+
+function buildKmzFromKml(kmlPath, kmzPath) {
+  const kmlData = fs.readFileSync(kmlPath);
+  const nameBuf = Buffer.from('doc.kml');
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6);
+  local.writeUInt16LE(0, 8);
+  local.writeUInt16LE(0, 10);
+  local.writeUInt16LE(0, 12);
+  local.writeUInt32LE(0, 14);
+  local.writeUInt32LE(kmlData.length, 18);
+  local.writeUInt32LE(kmlData.length, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  local.writeUInt16LE(0, 28);
+
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(0, 8);
+  central.writeUInt16LE(0, 10);
+  central.writeUInt16LE(0, 12);
+  central.writeUInt16LE(0, 14);
+  central.writeUInt32LE(0, 16);
+  central.writeUInt32LE(kmlData.length, 20);
+  central.writeUInt32LE(kmlData.length, 24);
+  central.writeUInt16LE(nameBuf.length, 28);
+  central.writeUInt16LE(0, 30);
+  central.writeUInt16LE(0, 32);
+  central.writeUInt16LE(0, 34);
+  central.writeUInt16LE(0, 36);
+  central.writeUInt32LE(0, 38);
+  central.writeUInt32LE(0, 42);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + nameBuf.length, 12);
+  end.writeUInt32LE(local.length + nameBuf.length + kmlData.length, 16);
+  end.writeUInt16LE(0, 20);
+
+  fs.writeFileSync(kmzPath, Buffer.concat([local, nameBuf, kmlData, central, nameBuf, end]));
+}
+
 // GIS File Parser (KML + GeoJSON → turf FeatureCollection)
 // ══════════════════════════════════════════════════════════════════════════
 function parseGisFiles(gisFilePaths) {
@@ -186,31 +713,35 @@ function parseGisFiles(gisFilePaths) {
   for (const fp of gisFilePaths) {
     try {
       const ext = path.extname(fp).toLowerCase();
-      const raw = fs.readFileSync(fp, 'utf8');
-
       if (ext === '.geojson' || ext === '.json') {
+        const raw = fs.readFileSync(fp, 'utf8');
         const parsed = JSON.parse(raw);
         const fc = parsed.type === 'FeatureCollection' ? parsed
                  : parsed.type === 'Feature'           ? { type: 'FeatureCollection', features: [parsed] }
                  : null;
         if (fc) allFeatures.push(...fc.features.filter(f => f && f.geometry));
 
-      } else if (ext === '.kml' || ext === '.kmz') {
-        // Extract coordinates from KML using regex (no DOM parser dep)
-        const coordBlocks = raw.match(/<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi) || [];
-        for (const block of coordBlocks) {
-          const inner = block.replace(/<\/?coordinates[^>]*>/gi, '').trim();
-          const pairs = inner.split(/\s+/).map(pair => {
-            const parts = pair.split(',').map(Number);
-            return parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1]) ? [parts[0], parts[1]] : null;
-          }).filter(Boolean);
-          if (pairs.length === 1) {
-            allFeatures.push(turf.point(pairs[0]));
-          } else if (pairs.length > 1) {
-            // Close polygon if needed
-            const first = pairs[0], last = pairs[pairs.length - 1];
-            if (first[0] !== last[0] || first[1] !== last[1]) pairs.push(first);
-            allFeatures.push(pairs.length >= 4 ? turf.polygon([pairs]) : turf.lineString(pairs));
+      } else if (ext === '.kml') {
+        allFeatures.push(...parseKmlText(fs.readFileSync(fp, 'utf8')));
+      } else if (ext === '.kmz') {
+        const kmzKml = parseKmzFile(fp);
+        if (kmzKml) allFeatures.push(...parseKmlText(kmzKml));
+      } else if (ext === '.shp') {
+        allFeatures.push(...parseShpFile(fp));
+      } else if (ext === '.zip') {
+        const entries = extractZipEntries(fs.readFileSync(fp));
+        for (const entry of entries) {
+          const entryExt = path.extname(entry.name).toLowerCase();
+          if (entryExt === '.geojson' || entryExt === '.json') {
+            const parsed = JSON.parse(entry.data.toString('utf8'));
+            const fc = parsed.type === 'FeatureCollection' ? parsed
+                     : parsed.type === 'Feature' ? { type: 'FeatureCollection', features: [parsed] }
+                     : null;
+            if (fc) allFeatures.push(...fc.features.filter(f => f && f.geometry));
+          } else if (entryExt === '.kml') {
+            allFeatures.push(...parseKmlText(entry.data.toString('utf8')));
+          } else if (entryExt === '.shp') {
+            allFeatures.push(...parseShpBuffer(entry.data));
           }
         }
       }
@@ -332,7 +863,22 @@ function buildPublicSpaces(center, radius, realOpenSpaces) {
 // ══════════════════════════════════════════════════════════════════════════
 // Leaflet Interactive HTML Map Generator
 // ══════════════════════════════════════════════════════════════════════════
-function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRoutes, publicSpaces, districtContext, urbanAnalysis, htmlPath) {
+function buildLeafletMap(
+  districtName,
+  city,
+  center,
+  radius,
+  gisFC,
+  pedestrianRoutes,
+  publicSpaces,
+  visualAxes,
+  restorationAssetFeatures,
+  districtContext,
+  urbanAnalysis,
+  districtSummary,
+  terrainSummary,
+  htmlPath
+) {
   const [lng, lat] = center;
   const name = districtName || 'Heritage District';
   const zoomLevel = radius < 0.002 ? 17 : radius < 0.008 ? 15 : radius < 0.02 ? 13 : 11;
@@ -359,8 +905,12 @@ function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRo
 
   const routesGeoJson = JSON.stringify({ type: 'FeatureCollection', features: pedestrianRoutes });
   const spacesGeoJson = JSON.stringify({ type: 'FeatureCollection', features: publicSpaces });
+  const axesGeoJson = JSON.stringify({ type: 'FeatureCollection', features: visualAxes || [] });
+  const assetsGeoJson = JSON.stringify({ type: 'FeatureCollection', features: restorationAssetFeatures || [] });
 
   const ua = urbanAnalysis || {};
+  const ds = districtSummary || {};
+  const ts = terrainSummary || {};
 
   const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -410,6 +960,15 @@ function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRo
     <div class="stat-box"><div class="stat-label">القيمة التراثية</div><div class="stat-value">${ua.heritageValue || '—'}</div></div>
     <div class="stat-box"><div class="stat-label">الطراز المكتشف</div><div class="stat-value">${ua.detectedStyle || '—'}</div></div>
     <div class="stat-box"><div class="stat-label">مسارات المشاة</div><div class="stat-value">${pedestrianRoutes.length}</div></div>
+    <div class="stat-box"><div class="stat-label">المباني</div><div class="stat-value">${districtContext.realBuildings.length}</div></div>
+    <div class="stat-box"><div class="stat-label">الفراغات</div><div class="stat-value">${publicSpaces.length}</div></div>
+    <div class="stat-box"><div class="stat-label">المحاور البصرية</div><div class="stat-value">${(visualAxes || []).length}</div></div>
+    <div class="stat-box"><div class="stat-label">أصول الترميم</div><div class="stat-value">${(restorationAssetFeatures || []).length}</div></div>
+  </div>
+  <div style="color:#94a3b8;font-size:11px;line-height:1.7">
+    <b style="color:#fff">Boundary:</b> ${ds.boundarySource || '—'}<br>
+    <b style="color:#fff">District Scale:</b> ${ds.districtScale || '—'}<br>
+    <b style="color:#fff">Terrain:</b> ${ts.terrainMode || '—'}
   </div>
   <hr>
   <div class="section-title">دليل الطبقات</div>
@@ -418,6 +977,8 @@ function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRo
   <div class="legend-item"><div class="legend-line" style="background:#f59e0b;height:2px;border-top:2px dashed #f59e0b;height:0"></div> مسارات المشاة</div>
   <div class="legend-item"><div class="legend-box" style="background:rgba(74,222,128,0.3);border:1px solid #4ade80"></div> فراغات عامة</div>
   <div class="legend-item"><div class="legend-box" style="background:rgba(148,163,184,0.2);border:1px solid #64748b"></div> مباني</div>
+  <div class="legend-item"><div class="legend-line" style="background:#38bdf8;height:2px;border-top:2px dashed #38bdf8;height:0"></div> محاور بصرية</div>
+  <div class="legend-item"><div class="legend-box" style="background:rgba(192,132,252,0.35);border:1px solid #c084fc;border-radius:999px"></div> أصول ترميم مدمجة</div>
   <hr>
   <div class="section-title">ملاحظات التحليل</div>
   <div style="color:#94a3b8;font-size:11px;line-height:1.6">${ua.restorationNotes || '—'}</div>
@@ -469,6 +1030,15 @@ function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRo
     onEachFeature: (f, layer) => layer.bindPopup(f.properties?.name || 'فراغ عام'),
   }).addTo(map);
 
+  // Visual axes
+  const axesData = ${axesGeoJson};
+  if (axesData.features.length > 0) {
+    L.geoJSON(axesData, {
+      style: { color: '#38bdf8', weight: 2, opacity: 0.75, dashArray: '8 6' },
+      onEachFeature: (f, layer) => layer.bindPopup(f.properties?.name || 'محور بصري'),
+    }).addTo(map);
+  }
+
   // Buildings
   const buildingsData = ${buildingsGeoJson};
   if (buildingsData.features.length > 0) {
@@ -477,6 +1047,20 @@ function buildLeafletMap(districtName, city, center, radius, gisFC, pedestrianRo
       onEachFeature: (f, layer) => {
         const p = f.properties || {};
         layer.bindPopup(\`<b>\${p.name || p.id || 'مبنى'}</b><br>النوع: \${p.type||'—'}<br>الحالة: \${p.condition||'—'}\`);
+      },
+    }).addTo(map);
+  }
+
+  // Restoration assets
+  const assetsData = ${assetsGeoJson};
+  if (assetsData.features.length > 0) {
+    L.geoJSON(assetsData, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
+        radius: 6, color: '#c084fc', weight: 2, fillColor: '#c084fc', fillOpacity: 0.45,
+      }),
+      onEachFeature: (f, layer) => {
+        const p = f.properties || {};
+        layer.bindPopup(\`<b>\${p.name || p.id || 'Restoration Asset'}</b><br>Role: \${p.assetRole || 'supporting-asset'}<br>Source: \${p.sourceService || 'Service 01/02'}\`);
       },
     }).addTo(map);
   }
@@ -811,7 +1395,7 @@ function buildSvgUrban(districtArea, districtName, urbanAnalysis, svgPath) {
 // ══════════════════════════════════════════════════════════════════════════
 // Excel Report Generator
 // ══════════════════════════════════════════════════════════════════════════
-async function buildExcel(districtName, city, period, archStyle, districtArea, lat, lng, urbanAnalysis, results, restoredMeta, xlsxPath) {
+async function buildExcel(districtName, city, period, archStyle, districtArea, lat, lng, urbanAnalysis, results, restoredMeta, districtSummary, terrainSummary, restorationAssetSummary, xlsxPath) {
   const wb      = new ExcelJS.Workbook();
   wb.creator    = 'رُؤى Heritage Platform';
   wb.created    = new Date();
@@ -828,6 +1412,8 @@ async function buildExcel(districtName, city, period, archStyle, districtArea, l
   sum.addRow([]);
 
   const fields = [
+    ['Service',             SERVICE_03_NAME],
+    ['Functional Definition', SERVICE_03_DEFINITION],
     ['District Name',       districtName || '—'],
     ['City',                city || '—'],
     ['Historic Period',     period || '—'],
@@ -839,6 +1425,10 @@ async function buildExcel(districtName, city, period, archStyle, districtArea, l
     ['Heritage Value',      urbanAnalysis?.heritageValue || '—'],
     ['Key Features',        (urbanAnalysis?.keyFeatures || []).join(', ') || '—'],
     ['Restoration Notes',   urbanAnalysis?.restorationNotes || '—'],
+    ['Boundary Source',     districtSummary?.boundarySource || 'â€”'],
+    ['District Scale',      districtSummary?.districtScale || 'â€”'],
+    ['Terrain Mode',        terrainSummary?.terrainMode || 'â€”'],
+    ['Restoration Assets Integrated', `${restorationAssetSummary?.totalAssets || 0}`],
     ['Views Generated',     `${results.length} urban views`],
     ['Generated At',        new Date().toLocaleString()],
     ['Platform',            'رُؤى — Urban Heritage Geospatial Analysis'],
@@ -923,7 +1513,7 @@ async function buildExcel(districtName, city, period, archStyle, districtArea, l
 // ══════════════════════════════════════════════════════════════════════════
 // Word Analytical Report Generator
 // ══════════════════════════════════════════════════════════════════════════
-async function buildWord(districtName, city, period, archStyle, districtArea, urbanAnalysis, results, restoredMeta, docxPath) {
+async function buildWord(districtName, city, period, archStyle, districtArea, urbanAnalysis, results, restoredMeta, districtSummary, terrainSummary, restorationAssetSummary, docxPath) {
   const name    = districtName || 'الحي التراثي';
   const safeStr = s => String(s || '—');
 
@@ -938,6 +1528,9 @@ async function buildWord(districtName, city, period, archStyle, districtArea, ur
       alignment: AlignmentType.CENTER,
     }),
     new Paragraph({ text: '' }),
+    new Paragraph({ text: SERVICE_03_NAME, alignment: AlignmentType.CENTER }),
+    new Paragraph({ text: SERVICE_03_DEFINITION }),
+    new Paragraph({ text: '' }),
 
     // Section 1: Project Info
     new Paragraph({ text: '١. معلومات المشروع', heading: HeadingLevel.HEADING_2 }),
@@ -947,6 +1540,9 @@ async function buildWord(districtName, city, period, archStyle, districtArea, ur
       ['الحقبة التاريخية', safeStr(period)],
       ['النمط المعماري', safeStr(archStyle)],
       ['مساحة الحي', districtArea ? `${districtArea} م²` : '—'],
+      ['Boundary Source', safeStr(districtSummary?.boundarySource)],
+      ['Terrain Mode', safeStr(terrainSummary?.terrainMode)],
+      ['Integrated Restoration Assets', String(restorationAssetSummary?.totalAssets || 0)],
     ].map(([label, val]) =>
       new Paragraph({ children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun({ text: val })] })
     )),
@@ -1097,8 +1693,14 @@ router.post('/analyze', (req, res, next) => {
     console.log('═'.repeat(60));
 
     // ── Collect uploaded image files for GPT-4o ─────────────────────────
+    const validationError = validateService3Inputs(req.files || {});
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
+    const inputSummary   = summarizeService3Inputs(req.files || {});
     const aerialFiles    = ((req.files && req.files['aerialImages'])      || []).map(f => f.path);
     const geoFilePaths   = ((req.files && req.files['geoFiles'])          || []).map(f => f.path);
+    const demFiles       = ((req.files && req.files['demFiles'])          || []);
     const restoredFiles  = ((req.files && req.files['restoredBuildings']) || []);
     const restoredMeta   = restoredFiles.map(f => ({
       name: f.originalname,
@@ -1106,6 +1708,7 @@ router.post('/analyze', (req, res, next) => {
       type: f.mimetype,
       ext:  path.extname(f.originalname).toLowerCase().slice(1),
     }));
+    const restorationAssetSummary = summarizeRestorationAssets(restoredFiles);
     if (restoredFiles.length) {
       console.log(`         📦 Restored buildings: ${restoredFiles.length} asset(s) provided`);
     }
@@ -1117,6 +1720,10 @@ router.post('/analyze', (req, res, next) => {
     const effectiveCenter = districtCtx.center;
     const effectiveRadius = districtCtx.radius;
     const [effLng, effLat] = effectiveCenter;
+    const terrainSummary = {
+      ...summarizeTerrainInputs(demFiles, districtCtx),
+      ...analyzeTerrainFiles(demFiles),
+    };
     if (districtCtx.hasRealData) {
       console.log(`         ✓ Real GIS data: center [${effLat.toFixed(5)}, ${effLng.toFixed(5)}], features: ${gisFC.features.length}`);
     } else {
@@ -1126,6 +1733,14 @@ router.post('/analyze', (req, res, next) => {
     // Build pedestrian routes + public spaces
     const pedestrianRoutes = buildPedestrianRoutes(effectiveCenter, effectiveRadius, districtCtx.realStreets);
     const publicSpaces     = buildPublicSpaces(effectiveCenter, effectiveRadius, districtCtx.realOpenSpaces);
+    const visualAxes       = buildVisualAxes(effectiveCenter, effectiveRadius, districtCtx.realStreets);
+    const restorationAssetFeatures = buildRestorationAssetFeatures(restorationAssetSummary, effectiveCenter, effectiveRadius);
+    const districtSummary = buildDistrictRestorationSummary(
+      districtCtx, null, terrainSummary, restorationAssetSummary, inputSummary
+    );
+    districtSummary.pedestrianRouteCount = pedestrianRoutes.length;
+    districtSummary.publicSpaceCount = publicSpaces.length;
+    districtSummary.visualAxisCount = visualAxes.length;
     console.log(`         ✓ ${pedestrianRoutes.length} pedestrian routes | ${publicSpaces.length} public spaces`);
 
     // ── STEP 1: GPT-4o Urban Analysis ────────────────────────────────────
@@ -1144,7 +1759,10 @@ router.post('/analyze', (req, res, next) => {
     }
 
     // ── STEP 2: SDXL Urban Views ──────────────────────────────────────────
-    const views   = buildUrbanViews(districtName, archStyle, urbanAnalysis);
+    districtSummary.planningGoal = buildDistrictRestorationSummary(
+      districtCtx, urbanAnalysis, terrainSummary, restorationAssetSummary, inputSummary
+    ).planningGoal;
+    const views   = buildDistrictUrbanViews(districtName, archStyle, urbanAnalysis, districtSummary, terrainSummary, restorationAssetSummary);
     const results = [];
 
     for (const [i, view] of views.entries()) {
@@ -1194,7 +1812,7 @@ router.post('/analyze', (req, res, next) => {
     // ── STEP 3: KML ───────────────────────────────────────────────────────
     console.log('\n[Post] Building KML...');
     const kmlPath = path.join(jobDir, 'district_map.kml');
-    buildKml(latNum, lngNum, districtName, city, period, urbanAnalysis, kmlPath);
+    buildKml(effLat, effLng, districtName, city, period, urbanAnalysis, kmlPath);
     console.log(`       ✓ KML: ${(fs.statSync(kmlPath).size/1024).toFixed(0)} KB`);
 
     // ── STEP 4: GeoJSON (enriched with pedestrian routes + public spaces) ──
@@ -1203,8 +1821,31 @@ router.post('/analyze', (req, res, next) => {
     buildGeoJson(effLat, effLng, districtName, city, period, districtArea, urbanAnalysis, geoJsonPath);
     try {
       const gjContent = JSON.parse(fs.readFileSync(geoJsonPath, 'utf8'));
-      gjContent.features.push(...pedestrianRoutes, ...publicSpaces);
-      gjContent.metadata = { ...gjContent.metadata, pedestrianRoutes: pedestrianRoutes.length, publicSpaces: publicSpaces.length };
+      gjContent.features.push(
+        ...districtCtx.realStreets,
+        ...districtCtx.realBuildings,
+        ...districtCtx.realOpenSpaces,
+        ...pedestrianRoutes,
+        ...publicSpaces,
+        ...visualAxes,
+        ...restorationAssetFeatures
+      );
+      gjContent.metadata = {
+        ...gjContent.metadata,
+        serviceName: SERVICE_03_NAME,
+        serviceDefinition: SERVICE_03_DEFINITION,
+        pedestrianRoutes: pedestrianRoutes.length,
+        publicSpaces: publicSpaces.length,
+        visualAxes: visualAxes.length,
+        terrainMode: terrainSummary.terrainMode,
+        terrainFiles: terrainSummary.terrainFiles,
+        minElevation: terrainSummary.minElevation,
+        maxElevation: terrainSummary.maxElevation,
+        reliefMeters: terrainSummary.reliefMeters,
+        restorationAssetsIntegrated: restorationAssetSummary.totalAssets,
+        districtScale: districtSummary.districtScale,
+        boundarySource: districtSummary.boundarySource,
+      };
       fs.writeFileSync(geoJsonPath, JSON.stringify(gjContent, null, 2));
     } catch(e) { console.warn('[GeoJSON] enrich failed:', e.message); }
     console.log(`       ✓ GeoJSON: ${(fs.statSync(geoJsonPath).size/1024).toFixed(0)} KB`);
@@ -1212,7 +1853,22 @@ router.post('/analyze', (req, res, next) => {
     // ── STEP 4b: Interactive HTML Map (Leaflet) ──────────────────────────
     console.log('[Post] Building Leaflet interactive HTML map...');
     const htmlMapPath = path.join(jobDir, 'interactive_map.html');
-    buildLeafletMap(districtName, city, effectiveCenter, effectiveRadius, gisFC, pedestrianRoutes, publicSpaces, districtCtx, urbanAnalysis, htmlMapPath);
+    buildLeafletMap(
+      districtName,
+      city,
+      effectiveCenter,
+      effectiveRadius,
+      gisFC,
+      pedestrianRoutes,
+      publicSpaces,
+      visualAxes,
+      restorationAssetFeatures,
+      districtCtx,
+      urbanAnalysis,
+      districtSummary,
+      terrainSummary,
+      htmlMapPath
+    );
     console.log(`       ✓ HTML Map: ${(fs.statSync(htmlMapPath).size/1024).toFixed(0)} KB`);
 
     // ── STEP 5: DXF Urban Plan ────────────────────────────────────────────
@@ -1226,17 +1882,33 @@ router.post('/analyze', (req, res, next) => {
     const svgPath = path.join(jobDir, 'urban_plan.svg');
     buildSvgUrban(districtArea, districtName, urbanAnalysis, svgPath);
     console.log(`       ✓ SVG: ${(fs.statSync(svgPath).size/1024).toFixed(0)} KB`);
+    console.log('[Post] Building urban plan PDF / AI / KMZ...');
+    const urbanPlanPdfPath = path.join(jobDir, 'urban_plan.pdf');
+    await buildUrbanPlanPdf(districtName, districtArea, districtSummary, urbanPlanPdfPath);
+    const aiPath = path.join(jobDir, 'urban_plan.ai');
+    buildAiFromSvg(svgPath, aiPath);
+    const kmzPath = path.join(jobDir, 'district_map.kmz');
+    buildKmzFromKml(kmlPath, kmzPath);
+    console.log(`       ✓ Urban Plan PDF: ${(fs.statSync(urbanPlanPdfPath).size/1024).toFixed(0)} KB`);
+    console.log(`       ✓ AI: ${(fs.statSync(aiPath).size/1024).toFixed(0)} KB`);
+    console.log(`       ✓ KMZ: ${(fs.statSync(kmzPath).size/1024).toFixed(0)} KB`);
 
     // ── STEP 7: Excel ─────────────────────────────────────────────────────
     console.log('[Post] Building Excel report...');
     const xlsxPath = path.join(jobDir, 'urban_analysis.xlsx');
-    await buildExcel(districtName, city, period, archStyle, districtArea, lat, lng, urbanAnalysis, results, restoredMeta, xlsxPath);
+    await buildExcel(
+      districtName, city, period, archStyle, districtArea, lat, lng,
+      urbanAnalysis, results, restoredMeta, districtSummary, terrainSummary, restorationAssetSummary, xlsxPath
+    );
     console.log(`       ✓ Excel: ${(fs.statSync(xlsxPath).size/1024).toFixed(0)} KB`);
 
     // ── STEP 8: Word Report ───────────────────────────────────────────────
     console.log('[Post] Building Word analytical report...');
     const docxPath = path.join(jobDir, 'analytical_report.docx');
-    await buildWord(districtName, city, period, archStyle, districtArea, urbanAnalysis, results, restoredMeta, docxPath);
+    await buildWord(
+      districtName, city, period, archStyle, districtArea,
+      urbanAnalysis, results, restoredMeta, districtSummary, terrainSummary, restorationAssetSummary, docxPath
+    );
     console.log(`       ✓ Word: ${(fs.statSync(docxPath).size/1024).toFixed(0)} KB`);
 
     // ── STEP 9: PDF ───────────────────────────────────────────────────────
@@ -1249,11 +1921,17 @@ router.post('/analyze', (req, res, next) => {
     const metaPath = path.join(jobDir, 'metadata.json');
     const meta = {
       jobId, service: 3,
+      serviceName: SERVICE_03_NAME,
+      serviceDefinition: SERVICE_03_DEFINITION,
       model: 'stability-ai/sdxl + openai/gpt-4o',
       districtName, city, period, archStyle,
-      lat: latNum, lng: lngNum,
+      lat: effLat, lng: effLng,
       districtArea, notes,
+      inputSummary,
       urbanAnalysis,
+      districtSummary,
+      terrainSummary,
+      restorationAssetSummary,
       viewsGenerated: results.length,
       processedAt: new Date().toISOString(),
       totalTimeSec: ((Date.now() - t0) / 1000).toFixed(1),
@@ -1274,8 +1952,11 @@ router.post('/analyze', (req, res, next) => {
     outputFiles.push(
       { label: 'خريطة تفاعلية HTML (للمتصفح)', url: relUrl(htmlMapPath), ext: 'html',    icon: '🌐' },
       { label: 'خريطة Google Earth (KML)',          url: relUrl(kmlPath),     ext: 'kml',     icon: '🌍' },
+      { label: 'خريطة Google Earth المضغوطة (KMZ)', url: relUrl(kmzPath),     ext: 'kmz',     icon: '🗺️' },
       { label: 'بيانات جغرافية GIS (GeoJSON)',           url: relUrl(geoJsonPath), ext: 'geojson', icon: '📌' },
       { label: 'المخطط العمراني (DXF — AutoCAD)',       url: relUrl(dxfPath),    ext: 'dxf',     icon: '📐' },
+      { label: 'المخطط العمراني للطباعة (PDF)',          url: relUrl(urbanPlanPdfPath), ext: 'pdf', icon: '📄' },
+      { label: 'المخطط العمراني للتحرير (AI)',           url: relUrl(aiPath),     ext: 'ai',      icon: '🎨' },
       { label: 'المخطط البصري (SVG)',                   url: relUrl(svgPath),    ext: 'svg',     icon: '🗺️' },
       { label: 'التقرير التحليلي الشامل (Word)',         url: relUrl(docxPath),   ext: 'docx',    icon: '📝' },
       { label: 'التقرير المصور (PDF)',                    url: relUrl(pdfPath),    ext: 'pdf',     icon: '📄' },
@@ -1290,7 +1971,11 @@ router.post('/analyze', (req, res, next) => {
     return res.json({
       success: true,
       jobId,
+      serviceName: SERVICE_03_NAME,
       urbanAnalysis,
+      districtSummary,
+      terrainSummary,
+      restorationAssetSummary,
       outputFiles,
       images: results.map(r => ({
         id:        r.id,

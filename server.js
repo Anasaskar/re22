@@ -20,6 +20,9 @@ app.use('/outputs', express.static(path.join(__dirname, 'public/outputs')));
 app.use('/api/service1', require('./src/routes/service1'));
 app.use('/api/service2', require('./src/routes/service2'));
 app.use('/api/service3', require('./src/routes/service3'));
+app.use('/api/service4', require('./src/routes/service4'));
+app.use('/api/service5', require('./src/routes/service5'));
+app.use('/api/service6', require('./src/routes/service6'));
 
 // ── Index fallback ────────────────────────────────────────────────────────
 app.get('/', (req, res) => {

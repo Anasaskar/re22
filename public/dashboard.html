@@ -1732,6 +1732,83 @@ function s3_reset() {
   if (document.getElementById('s3-style'))    document.getElementById('s3-style').selectedIndex = 0;
 }
 
+function s4_escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function s4_getJobsCatalog() {
+  return Array.isArray(window._s4JobsCatalog) ? window._s4JobsCatalog : [];
+}
+
+function s4_findJob(service, jobId) {
+  if (!jobId) return null;
+  return s4_getJobsCatalog().find(job => job.service === service && job.jobId === jobId) || null;
+}
+
+function s4_renderLinkedJobsPreview() {
+  const container = document.getElementById('s4-linked-preview');
+  if (!container) return;
+
+  const selectedJobs = [
+    { service: 1, jobId: document.getElementById('s4-s1-job')?.value || '' },
+    { service: 2, jobId: document.getElementById('s4-s2-job')?.value || '' },
+    { service: 3, jobId: document.getElementById('s4-s3-job')?.value || '' },
+  ]
+    .map(item => s4_findJob(item.service, item.jobId))
+    .filter(Boolean);
+
+  if (!selectedJobs.length) {
+    container.innerHTML = `
+      <div class="rounded-2xl border border-dashed border-panelBorder bg-[#0b1521] p-6 text-center">
+        <i data-lucide="file-stack" class="w-10 h-10 text-accent/50 mx-auto mb-3"></i>
+        <p class="text-white font-bold text-sm mb-1">ستظهر المخرجات المرتبطة هنا</p>
+        <p class="text-textMuted text-xs">اختر مهمة سابقة من المراجع 01 أو 02 أو 03 لعرض مخرجاتها داخل هذه المرحلة.</p>
+      </div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  container.innerHTML = selectedJobs.map(job => {
+    const previewImages = (job.preview?.previewImages || []).slice(0, 4);
+    const outputFiles = (job.preview?.outputFiles || []).slice(0, 8);
+    const imagesHtml = previewImages.length
+      ? `<div class="grid grid-cols-2 gap-2 mt-3">${previewImages.map(image => `
+          <a href="${image.url}" target="_blank" class="block rounded-xl overflow-hidden border border-panelBorder bg-[#0b1521]">
+            <img src="${image.url}" alt="${s4_escapeHtml(image.label || job.title)}" class="w-full h-28 object-cover">
+          </a>`).join('')}</div>`
+      : `<div class="mt-3 rounded-xl border border-dashed border-panelBorder bg-[#0b1521] px-4 py-5 text-center text-textMuted text-xs">لا توجد صور معاينة متاحة لهذه المهمة.</div>`;
+
+    const filesHtml = outputFiles.length
+      ? `<div class="flex flex-wrap gap-2 mt-3">${outputFiles.map(file => `
+          <a href="${file.url}" download class="dl-btn">
+            <span>${s4_escapeHtml((file.ext || 'file').toUpperCase())}</span>
+            <span>${s4_escapeHtml(file.label || 'Output')}</span>
+          </a>`).join('')}</div>`
+      : `<p class="text-textMuted text-xs mt-3">لم يتم العثور على ملفات مخرجات للمعاينة.</p>`;
+
+    return `
+      <div class="rounded-2xl border border-panelBorder bg-panelDark p-4">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p class="text-accent font-bold text-xs">${s4_escapeHtml(job.serviceName || `المرجع ${job.service}`)}</p>
+            <p class="text-white font-bold text-sm mt-1">${s4_escapeHtml(job.title || `مهمة ${job.jobId}`)}</p>
+            <p class="text-textMuted text-xs mt-1">${s4_escapeHtml(job.subtitle || job.preview?.summary || '')}</p>
+          </div>
+          <span class="tag">${s4_escapeHtml(job.jobId.slice(0, 8))}</span>
+        </div>
+        ${imagesHtml}
+        ${filesHtml}
+      </div>`;
+  }).join('');
+
+  lucide.createIcons();
+}
+
 function s4_bootstrap() {
   const panel = document.getElementById('panel-s4');
   if (!panel || panel.dataset.bootstrapped === 'true') return;
@@ -1770,6 +1847,22 @@ function s4_bootstrap() {
       <select id="s4-s3-job" class="field-input"><option value="">Ø§Ø®ØªÙŠØ§Ø±ÙŠ â€” Ø¨Ø¯ÙˆÙ† Ø±Ø¨Ø·</option></select>
     </div>`;
   uploadCard.insertBefore(jobSelectors, uploadCard.querySelector('.upload-zone'));
+
+  const linkedPreview = document.createElement('div');
+  linkedPreview.id = 's4-linked-preview';
+  linkedPreview.className = 'mb-4 space-y-3';
+  jobSelectors.insertAdjacentElement('afterend', linkedPreview);
+
+  const jobsStatus = document.createElement('p');
+  jobsStatus.id = 's4-jobs-status';
+  jobsStatus.className = 'text-textMuted text-xs mb-4';
+  jobsStatus.textContent = 'جارٍ تحميل المهام السابقة...';
+  linkedPreview.insertAdjacentElement('beforebegin', jobsStatus);
+
+  ['s4-s1-job', 's4-s2-job', 's4-s3-job'].forEach(id => {
+    const select = document.getElementById(id);
+    if (select) select.onchange = s4_renderLinkedJobsPreview;
+  });
 
   const formInputs = formCard.querySelectorAll('input.field-input');
   const formSelects = formCard.querySelectorAll('select.field-input');
@@ -1854,18 +1947,24 @@ function s4_bootstrap() {
     <button onclick="s4_reset()" class="w-full bg-panelInner border border-panelBorder text-textMuted font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:text-white hover:border-accent/30 transition-all"><i data-lucide="rotate-ccw" class="w-4 h-4"></i> ØªÙ‚Ø±ÙŠØ± Ø¬Ø¯ÙŠØ¯</button>`;
   errorBox.insertAdjacentElement('afterend', results);
 
+  s4_applyArabicFixes();
   s4_loadJobs();
+  s4_renderLinkedJobsPreview();
   lucide.createIcons();
 }
 
 async function s4_loadJobs(force = false) {
   if (window._s4JobsLoaded && !force) return;
   try {
-    const res = await fetch('/api/service4/jobs');
-    const data = await res.json();
+    const status = document.getElementById('s4-jobs-status');
+    if (status) status.textContent = 'جارٍ تحميل المهام السابقة...';
+
+    const res = await fetch('/api/service4/jobs', { cache: 'no-store' });
+    const data = await s1_readApiResponse(res);
     if (!res.ok) throw new Error(data.error || 'ØªØ¹Ø°Ø± Ø¬Ù„Ø¨ Ø§Ù„Ù…Ù‡Ø§Ù… Ø§Ù„Ø³Ø§Ø¨Ù‚Ø©');
 
     const jobs = data.jobs || [];
+    window._s4JobsCatalog = jobs;
     const configs = [
       { id: 's4-s1-job', service: 1 },
       { id: 's4-s2-job', service: 2 },
@@ -1888,8 +1987,32 @@ async function s4_loadJobs(force = false) {
       if (current) select.value = current;
     });
 
+    const counts = {
+      1: jobs.filter(job => job.service === 1).length,
+      2: jobs.filter(job => job.service === 2).length,
+      3: jobs.filter(job => job.service === 3).length,
+    };
+
+    const s1Label = document.getElementById('s4-s1-job')?.closest('div')?.querySelector('label');
+    const s2Label = document.getElementById('s4-s2-job')?.closest('div')?.querySelector('label');
+    const s3Label = document.getElementById('s4-s3-job')?.closest('div')?.querySelector('label');
+    if (s1Label) s1Label.textContent = `ربط المرجع 01 (${counts[1]})`;
+    if (s2Label) s2Label.textContent = `ربط المرجع 02 (${counts[2]})`;
+    if (s3Label) s3Label.textContent = `ربط المرجع 03 (${counts[3]})`;
+
+    if (status) {
+      status.textContent = jobs.length
+        ? `تم تحميل ${jobs.length} مهمة سابقة. المتاح من المرجع 02: ${counts[2]}.`
+        : 'لم يتم العثور على مهام سابقة.';
+    }
+
     window._s4JobsLoaded = true;
+    s4_renderLinkedJobsPreview();
+    if (typeof s4_applyArabicFixes === 'function') s4_applyArabicFixes();
   } catch (error) {
+    const status = document.getElementById('s4-jobs-status');
+    if (status) status.textContent = `تعذر تحميل المهام السابقة: ${error.message}`;
+    if (typeof s4_applyArabicFixes === 'function') s4_applyArabicFixes();
     console.warn('[S4] jobs load failed:', error.message);
   }
 }
@@ -2021,14 +2144,24 @@ function s4_reset() {
     const el = document.getElementById(id);
     if (el) el.selectedIndex = 0;
   });
+  s4_renderLinkedJobsPreview();
 }
-
-s4_bootstrap();
 
 function s4_applyArabicFixes() {
   const setText = (selector, text) => {
     const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
     if (el) el.textContent = text;
+  };
+
+  const setSelectOptions = (select, options) => {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options.map(option =>
+      `<option value="${option.value}">${option.label}</option>`
+    ).join('');
+    if ([...select.options].some(option => option.value === current)) {
+      select.value = current;
+    }
   };
 
   const setPlaceholder = (id, text) => {
@@ -2063,19 +2196,35 @@ function s4_applyArabicFixes() {
 
   const standards = document.getElementById('s4-standards');
   if (standards) {
-    standards.innerHTML = '<option value="unesco">معايير اليونسكو</option><option value="saudi">هيئة التراث السعودية</option><option value="both">كليهما</option>';
+    setSelectOptions(standards, [
+      { value: 'unesco', label: 'معايير اليونسكو' },
+      { value: 'saudi', label: 'هيئة التراث السعودية' },
+      { value: 'both', label: 'كليهما' },
+    ]);
   }
   const reportType = document.getElementById('s4-type');
   if (reportType) {
-    reportType.innerHTML = '<option value="documentation">تقرير توثيق</option><option value="rehabilitation">تقرير تأهيل</option><option value="feasibility">دراسة جدوى</option>';
+    setSelectOptions(reportType, [
+      { value: 'documentation', label: 'تقرير توثيق' },
+      { value: 'rehabilitation', label: 'تقرير تأهيل' },
+      { value: 'feasibility', label: 'دراسة جدوى' },
+    ]);
   }
   const language = document.getElementById('s4-language');
   if (language) {
-    language.innerHTML = '<option value="arabic">العربية</option><option value="english">الإنجليزية</option><option value="bilingual">ثنائية اللغة</option>';
+    setSelectOptions(language, [
+      { value: 'arabic', label: 'العربية' },
+      { value: 'english', label: 'الإنجليزية' },
+      { value: 'bilingual', label: 'ثنائية اللغة' },
+    ]);
   }
   const depth = document.getElementById('s4-depth');
   if (depth) {
-    depth.innerHTML = '<option value="brief">موجز</option><option value="medium">متوسط</option><option value="comprehensive">شامل</option>';
+    setSelectOptions(depth, [
+      { value: 'brief', label: 'موجز' },
+      { value: 'medium', label: 'متوسط' },
+      { value: 'comprehensive', label: 'شامل' },
+    ]);
   }
 
   setLabelForInput('s4-style', 'الطراز المعماري');
@@ -2120,12 +2269,6 @@ function s4_applyArabicFixes() {
   if (resetBtn) {
     resetBtn.innerHTML = '<i data-lucide="rotate-ccw" class="w-4 h-4"></i> تقرير جديد';
   }
-}
-
-const _s4_loadJobs = s4_loadJobs;
-async function s4_loadJobs(force = false) {
-  await _s4_loadJobs(force);
-  s4_applyArabicFixes();
 }
 
 async function s4_submit() {
@@ -2175,7 +2318,7 @@ async function s4_submit() {
     form.append('architecturalStyle', document.getElementById('s4-style')?.value || '');
     form.append('targetFunction', document.getElementById('s4-target-function')?.value || '');
     form.append('standardProfile', document.getElementById('s4-standards')?.value || 'both');
-    form.append('reportType', document.getElementById('s4-type')?.value || 'rehabilitation');
+    form.append('reportType', document.getElementById('s4-type')?.value || 'تقرير توثيق');
     form.append('reportMode', document.getElementById('s4-mode')?.value || 'academic');
     form.append('language', document.getElementById('s4-language')?.value || 'arabic');
     form.append('depth', document.getElementById('s4-depth')?.value || 'medium');
@@ -2214,6 +2357,515 @@ function s4_showResults(data) {
 
   document.getElementById('s4-result-count').textContent =
     `${(data.outputFiles || []).length} ملف مخرج - ${data.provider || 'template'}${data.model ? ` / ${data.model}` : ''}`;
+  document.getElementById('s4-report-title').textContent =
+    data.preview?.title || data.report?.title || 'تقرير أكاديمي';
+  document.getElementById('s4-report-summary').textContent =
+    data.preview?.executiveSummary || data.report?.executiveSummary || '';
+
+  const sections = document.getElementById('s4-sections');
+  sections.innerHTML = '';
+  for (const title of (data.preview?.sectionTitles || [])) {
+    const item = document.createElement('div');
+    item.className = 'bg-[#0b1521] rounded-xl p-3 border border-panelBorder';
+    item.innerHTML = `<p class="text-white text-sm font-bold">${title}</p>`;
+    sections.appendChild(item);
+  }
+
+  const downloads = document.getElementById('s4-downloads');
+  downloads.innerHTML = '';
+  for (const file of (data.outputFiles || [])) {
+    const a = document.createElement('a');
+    a.href = file.url;
+    a.download = '';
+    a.className = ['pdf','docx','pptx','xlsx'].includes(file.ext) ? 'dl-btn primary' : 'dl-btn';
+    a.innerHTML = `<span>${(file.ext || 'file').toUpperCase()}</span><span>${file.label}</span>`;
+    downloads.appendChild(a);
+  }
+
+  s4_applyArabicFixes();
+  lucide.createIcons();
+}
+
+function s4_referenceLabel(service, count = null) {
+  const label = `ربط المرجع ${String(service).padStart(2, '0')}`;
+  return count == null ? label : `${label} (${count})`;
+}
+
+function s4_renderLinkedJobsPreview() {
+  const container = document.getElementById('s4-linked-preview');
+  if (!container) return;
+
+  const selectedJobs = [
+    { service: 1, jobId: document.getElementById('s4-s1-job')?.value || '' },
+    { service: 2, jobId: document.getElementById('s4-s2-job')?.value || '' },
+    { service: 3, jobId: document.getElementById('s4-s3-job')?.value || '' },
+  ]
+    .map(item => s4_findJob(item.service, item.jobId))
+    .filter(Boolean);
+
+  if (!selectedJobs.length) {
+    container.innerHTML = `
+      <div class="rounded-2xl border border-dashed border-panelBorder bg-[#0b1521] p-6 text-center">
+        <i data-lucide="file-stack" class="w-10 h-10 text-accent/50 mx-auto mb-3"></i>
+        <p class="text-white font-bold text-sm mb-1">ستظهر المخرجات المرتبطة هنا</p>
+        <p class="text-textMuted text-xs">اختر مهمة سابقة من المراجع 01 أو 02 أو 03 لعرض مخرجاتها داخل هذه المرحلة.</p>
+      </div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  container.innerHTML = selectedJobs.map(job => {
+    const previewImages = (job.preview?.previewImages || []).slice(0, 4);
+    const outputFiles = (job.preview?.outputFiles || []).slice(0, 8);
+    const imagesHtml = previewImages.length
+      ? `<div class="grid grid-cols-2 gap-2 mt-3">${previewImages.map(image => `
+          <a href="${image.url}" target="_blank" class="block rounded-xl overflow-hidden border border-panelBorder bg-[#0b1521]">
+            <img src="${image.url}" alt="${s4_escapeHtml(image.label || job.title)}" class="w-full h-28 object-cover">
+          </a>`).join('')}</div>`
+      : `<div class="mt-3 rounded-xl border border-dashed border-panelBorder bg-[#0b1521] px-4 py-5 text-center text-textMuted text-xs">لا توجد صور معاينة متاحة لهذه المهمة.</div>`;
+
+    const filesHtml = outputFiles.length
+      ? `<div class="flex flex-wrap gap-2 mt-3">${outputFiles.map(file => `
+          <a href="${file.url}" download class="dl-btn">
+            <span>${s4_escapeHtml((file.ext || 'file').toUpperCase())}</span>
+            <span>${s4_escapeHtml(file.label || 'ملف')}</span>
+          </a>`).join('')}</div>`
+      : `<p class="text-textMuted text-xs mt-3">لم يتم العثور على ملفات مخرجات للمعاينة.</p>`;
+
+    return `
+      <div class="rounded-2xl border border-panelBorder bg-panelDark p-4">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p class="text-accent font-bold text-xs">${s4_escapeHtml(s4_referenceLabel(job.service).replace('ربط ', ''))}</p>
+            <p class="text-white font-bold text-sm mt-1">${s4_escapeHtml(job.title || `مهمة ${job.jobId}`)}</p>
+            <p class="text-textMuted text-xs mt-1">${s4_escapeHtml(job.subtitle || job.preview?.summary || '')}</p>
+          </div>
+          <span class="tag">${s4_escapeHtml(job.jobId.slice(0, 8))}</span>
+        </div>
+        ${imagesHtml}
+        ${filesHtml}
+      </div>`;
+  }).join('');
+
+  lucide.createIcons();
+}
+
+function s4_bootstrap() {
+  const panel = document.getElementById('panel-s4');
+  if (!panel || panel.dataset.bootstrapped === 'true') return;
+  panel.dataset.bootstrapped = 'true';
+
+  const cards = panel.querySelectorAll('.bg-panelDark.border.border-panelBorder.rounded-2xl.p-5');
+  const uploadCard = cards[0];
+  const formCard = cards[1];
+  const submitBtn = panel.querySelector('button.w-full.bg-gradient-to-l');
+  if (!uploadCard || !formCard || !submitBtn) return;
+
+  uploadCard.querySelector('.flex.items-center.gap-2.mb-4')?.classList.add('flex-wrap');
+  const uploadHeader = uploadCard.querySelector('.flex.items-center.gap-2.mb-4');
+  if (uploadHeader) {
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'mr-auto px-3 py-2 rounded-xl bg-panelInner border border-panelBorder text-textMuted text-xs font-bold hover:text-white hover:border-accent/30 transition-colors flex items-center gap-2';
+    refreshBtn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> تحديث قائمة المهام';
+    refreshBtn.onclick = () => s4_loadJobs(true);
+    uploadHeader.appendChild(refreshBtn);
+  }
+
+  const jobSelectors = document.createElement('div');
+  jobSelectors.className = 'grid grid-cols-1 md:grid-cols-3 gap-3 mb-4';
+  jobSelectors.innerHTML = `
+    <div>
+      <label class="field-label">${s4_referenceLabel(1)}</label>
+      <select id="s4-s1-job" class="field-input"><option value="">بدون ربط</option></select>
+    </div>
+    <div>
+      <label class="field-label">${s4_referenceLabel(2)}</label>
+      <select id="s4-s2-job" class="field-input"><option value="">بدون ربط</option></select>
+    </div>
+    <div>
+      <label class="field-label">${s4_referenceLabel(3)}</label>
+      <select id="s4-s3-job" class="field-input"><option value="">بدون ربط</option></select>
+    </div>`;
+  uploadCard.insertBefore(jobSelectors, uploadCard.querySelector('.upload-zone'));
+
+  const linkedPreview = document.createElement('div');
+  linkedPreview.id = 's4-linked-preview';
+  linkedPreview.className = 'mb-4 space-y-3';
+  jobSelectors.insertAdjacentElement('afterend', linkedPreview);
+
+  const jobsStatus = document.createElement('p');
+  jobsStatus.id = 's4-jobs-status';
+  jobsStatus.className = 'text-textMuted text-xs mb-4';
+  jobsStatus.textContent = 'جارٍ تحميل المهام السابقة...';
+  linkedPreview.insertAdjacentElement('beforebegin', jobsStatus);
+
+  ['s4-s1-job', 's4-s2-job', 's4-s3-job'].forEach(id => {
+    const select = document.getElementById(id);
+    if (select) select.onchange = s4_renderLinkedJobsPreview;
+  });
+
+  const formInputs = formCard.querySelectorAll('input.field-input');
+  const formSelects = formCard.querySelectorAll('select.field-input');
+  const formTextareas = formCard.querySelectorAll('textarea.field-input');
+  if (formInputs[0]) formInputs[0].id = 's4-building-name';
+  if (formInputs[1]) formInputs[1].id = 's4-location';
+  if (formInputs[2]) formInputs[2].id = 's4-date';
+  if (formSelects[0]) formSelects[0].id = 's4-condition';
+  if (formSelects[1]) {
+    formSelects[1].id = 's4-standards';
+    formSelects[1].innerHTML = '<option value="unesco">معايير اليونسكو</option><option value="saudi">هيئة التراث السعودية</option><option value="both">كليهما</option>';
+  }
+  if (formSelects[2]) {
+    formSelects[2].id = 's4-type';
+    formSelects[2].innerHTML = '<option value="تقرير توثيق">تقرير توثيق</option><option value="تقرير أكاديمي">تقرير أكاديمي</option><option value="دراسة جدوى">دراسة جدوى</option>';
+  }
+  if (formSelects[3]) {
+    formSelects[3].id = 's4-language';
+    formSelects[3].innerHTML = '<option value="arabic">العربية</option><option value="english">الإنجليزية</option><option value="bilingual">ثنائية اللغة</option>';
+  }
+  if (formSelects[4]) {
+    formSelects[4].id = 's4-depth';
+    formSelects[4].innerHTML = '<option value="brief">موجز</option><option value="medium">متوسط</option><option value="comprehensive">شامل</option>';
+  }
+  if (formTextareas[0]) formTextareas[0].id = 's4-history';
+
+  const extraFields = document.createElement('div');
+  extraFields.className = 'col-span-2 grid grid-cols-2 gap-4';
+  extraFields.innerHTML = `
+    <div><label class="field-label">الطراز المعماري</label><input id="s4-style" type="text" class="field-input" placeholder="مثال: حجازي، نجدي، عثماني"></div>
+    <div><label class="field-label">الوظيفة المستهدفة</label><input id="s4-target-function" type="text" class="field-input" placeholder="مثال: متحف، مركز زوار"></div>
+    <div><label class="field-label">نمط الكتابة</label><select id="s4-mode" class="field-input"><option value="academic">صياغة أكاديمية</option><option value="professional">صياغة مهنية</option><option value="government">صياغة رسمية</option></select></div>
+    <div><label class="field-label">مرجع مكاني / عمراني</label><input id="s4-context-title" type="text" class="field-input" placeholder="ملخص قصير للسياق"></div>
+    <div class="col-span-2"><label class="field-label">القيمة التراثية</label><textarea id="s4-significance" class="field-input resize-none" rows="2" placeholder="ما هي أهمية المنشأة تاريخيا ومعماريا وثقافيا؟"></textarea></div>
+    <div class="col-span-2"><label class="field-label">الأضرار والمشاكل الراهنة</label><textarea id="s4-damage" class="field-input resize-none" rows="2" placeholder="تصدعات، تلف سطوح، إضافات غير متوافقة..."></textarea></div>
+    <div class="col-span-2"><label class="field-label">استراتيجية التأهيل</label><textarea id="s4-strategy" class="field-input resize-none" rows="2" placeholder="المبادئ الرئيسية للتدخل والترميم"></textarea></div>
+    <div class="col-span-2"><label class="field-label">مفهوم إعادة الاستخدام</label><textarea id="s4-reuse" class="field-input resize-none" rows="2" placeholder="كيف ستتم إعادة استخدام المنشأة؟"></textarea></div>
+    <div class="col-span-2"><label class="field-label">السياق الجغرافي والعمراني</label><textarea id="s4-context" class="field-input resize-none" rows="2" placeholder="العلاقة بالحي والشارع والمشهد الحضري"></textarea></div>
+    <div class="col-span-2"><label class="field-label">ملاحظات إضافية</label><textarea id="s4-notes" class="field-input resize-none" rows="2" placeholder="أي مراجع أو اشتراطات أو ملاحظات تنظيمية إضافية"></textarea></div>`;
+  formCard.appendChild(extraFields);
+
+  submitBtn.id = 's4-submit-btn';
+  submitBtn.onclick = s4_submit;
+
+  const processing = document.createElement('div');
+  processing.id = 's4-processing';
+  processing.className = 'hidden bg-panelDark border border-panelBorder rounded-2xl p-8 flex flex-col items-center gap-4 mt-5';
+  processing.innerHTML = `
+    <div class="spinner"></div>
+    <p class="text-white font-bold text-base">جارٍ إعداد التقرير الأكاديمي...</p>
+    <p id="s4-proc-detail" class="text-textMuted text-xs text-center">تجميع المخرجات السابقة وإنتاج المحتوى المنظم</p>
+    <div class="w-full bg-[#0b1521] rounded-full h-1.5 mt-2"><div id="s4-progress-bar" class="bg-accent h-1.5 rounded-full transition-all duration-500" style="width:5%"></div></div>`;
+  submitBtn.insertAdjacentElement('afterend', processing);
+
+  const errorBox = document.createElement('div');
+  errorBox.id = 's4-error';
+  errorBox.className = 'hidden bg-red-900/20 border border-red-500/30 rounded-2xl p-5 flex items-start gap-3 mt-5';
+  errorBox.innerHTML = '<i data-lucide="alert-circle" class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"></i><div><p class="text-red-300 font-bold text-sm mb-1">حدث خطأ</p><p id="s4-error-msg" class="text-red-400/80 text-xs"></p></div>';
+  processing.insertAdjacentElement('afterend', errorBox);
+
+  const results = document.createElement('div');
+  results.id = 's4-results';
+  results.className = 'hidden space-y-5 mt-5';
+  results.innerHTML = `
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_#4ade80]"></div><span class="text-white font-bold">اكتمل إنشاء التقرير</span></div>
+      <span id="s4-result-count" class="text-textMuted text-xs"></span>
+    </div>
+    <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+      <p class="text-accent font-bold text-sm mb-3">ملخص التقرير</p>
+      <p id="s4-report-title" class="text-white font-bold text-base mb-2"></p>
+      <p id="s4-report-summary" class="text-textMuted text-sm leading-relaxed"></p>
+    </div>
+    <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+      <p class="text-accent font-bold text-sm mb-3">أقسام التقرير</p>
+      <div id="s4-sections" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+    </div>
+    <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+      <p class="text-accent font-bold text-sm mb-4">تحميل المخرجات</p>
+      <div id="s4-downloads" class="flex flex-wrap gap-2"></div>
+    </div>
+    <button onclick="s4_reset()" class="w-full bg-panelInner border border-panelBorder text-textMuted font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:text-white hover:border-accent/30 transition-all"><i data-lucide="rotate-ccw" class="w-4 h-4"></i> تقرير جديد</button>`;
+  errorBox.insertAdjacentElement('afterend', results);
+
+  s4_applyArabicFixes();
+  s4_loadJobs();
+  s4_renderLinkedJobsPreview();
+  lucide.createIcons();
+}
+
+async function s4_loadJobs(force = false) {
+  if (window._s4JobsLoaded && !force) return;
+  try {
+    const status = document.getElementById('s4-jobs-status');
+    if (status) status.textContent = 'جارٍ تحميل المهام السابقة...';
+
+    const res = await fetch('/api/service4/jobs', { cache: 'no-store' });
+    const data = await s1_readApiResponse(res);
+    if (!res.ok) throw new Error(data.error || 'تعذر جلب المهام السابقة');
+
+    const jobs = data.jobs || [];
+    window._s4JobsCatalog = jobs;
+    const configs = [
+      { id: 's4-s1-job', service: 1 },
+      { id: 's4-s2-job', service: 2 },
+      { id: 's4-s3-job', service: 3 },
+    ];
+
+    configs.forEach(cfg => {
+      const select = document.getElementById(cfg.id);
+      if (!select) return;
+      const current = select.value;
+      select.dir = 'rtl';
+      select.style.textAlign = 'right';
+      select.innerHTML = '<option value="">بدون ربط</option>';
+      jobs.filter(job => job.service === cfg.service).forEach(job => {
+        const option = document.createElement('option');
+        option.value = job.jobId;
+        option.textContent = `${job.title}${job.subtitle ? ` - ${job.subtitle}` : ''} - ${job.jobId.slice(0, 8)}`;
+        select.appendChild(option);
+      });
+      if (current) select.value = current;
+    });
+
+    const counts = {
+      1: jobs.filter(job => job.service === 1).length,
+      2: jobs.filter(job => job.service === 2).length,
+      3: jobs.filter(job => job.service === 3).length,
+    };
+
+    const s1Label = document.getElementById('s4-s1-job')?.closest('div')?.querySelector('label');
+    const s2Label = document.getElementById('s4-s2-job')?.closest('div')?.querySelector('label');
+    const s3Label = document.getElementById('s4-s3-job')?.closest('div')?.querySelector('label');
+    if (s1Label) s1Label.textContent = s4_referenceLabel(1, counts[1]);
+    if (s2Label) s2Label.textContent = s4_referenceLabel(2, counts[2]);
+    if (s3Label) s3Label.textContent = s4_referenceLabel(3, counts[3]);
+
+    if (status) {
+      status.textContent = jobs.length
+        ? `تم تحميل ${jobs.length} مهمة سابقة. المتاح من المرجع 02: ${counts[2]}.`
+        : 'لم يتم العثور على مهام سابقة.';
+    }
+
+    window._s4JobsLoaded = true;
+    s4_renderLinkedJobsPreview();
+    s4_applyArabicFixes();
+  } catch (error) {
+    const status = document.getElementById('s4-jobs-status');
+    const reason = error?.message === 'Failed to fetch' ? 'فشل الاتصال بالخادم' : error.message;
+    if (status) status.textContent = `تعذر تحميل المهام السابقة: ${reason}`;
+    s4_applyArabicFixes();
+    console.warn('[S4] jobs load failed:', error.message);
+  }
+}
+
+function s4_applyArabicFixes() {
+  const setText = (selector, text) => {
+    const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+    if (el) el.textContent = text;
+  };
+
+  const setSelectOptions = (select, options) => {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options.map(option =>
+      `<option value="${option.value}">${option.label}</option>`
+    ).join('');
+    if ([...select.options].some(option => option.value === current)) {
+      select.value = current;
+    }
+  };
+
+  const setPlaceholder = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.placeholder = text;
+  };
+
+  const setLabelForInput = (id, text) => {
+    const input = document.getElementById(id);
+    const label = input?.closest('div')?.querySelector('label');
+    if (label) label.textContent = text;
+  };
+
+  const refreshBtn = document.querySelector('#panel-s4 .flex.items-center.gap-2.mb-4 button');
+  if (refreshBtn) {
+    refreshBtn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> تحديث قائمة المهام';
+  }
+
+  const s1Select = document.getElementById('s4-s1-job');
+  const s2Select = document.getElementById('s4-s2-job');
+  const s3Select = document.getElementById('s4-s3-job');
+  setText(s1Select?.closest('div')?.querySelector('label'), s4_referenceLabel(1));
+  setText(s2Select?.closest('div')?.querySelector('label'), s4_referenceLabel(2));
+  setText(s3Select?.closest('div')?.querySelector('label'), s4_referenceLabel(3));
+
+  [s1Select, s2Select, s3Select].forEach(select => {
+    if (!select) return;
+    select.dir = 'rtl';
+    select.style.textAlign = 'right';
+    if (select.options?.length && !select.options[0].value) {
+      select.options[0].text = 'بدون ربط';
+    }
+  });
+
+  setSelectOptions(document.getElementById('s4-standards'), [
+    { value: 'unesco', label: 'معايير اليونسكو' },
+    { value: 'saudi', label: 'هيئة التراث السعودية' },
+    { value: 'both', label: 'كليهما' },
+  ]);
+  setSelectOptions(document.getElementById('s4-type'), [
+    { value: 'تقرير توثيق', label: 'تقرير توثيق' },
+    { value: 'تقرير أكاديمي', label: 'تقرير أكاديمي' },
+    { value: 'دراسة جدوى', label: 'دراسة جدوى' },
+  ]);
+  setSelectOptions(document.getElementById('s4-language'), [
+    { value: 'arabic', label: 'العربية' },
+    { value: 'english', label: 'الإنجليزية' },
+    { value: 'bilingual', label: 'ثنائية اللغة' },
+  ]);
+  setSelectOptions(document.getElementById('s4-depth'), [
+    { value: 'brief', label: 'موجز' },
+    { value: 'medium', label: 'متوسط' },
+    { value: 'comprehensive', label: 'شامل' },
+  ]);
+  setSelectOptions(document.getElementById('s4-mode'), [
+    { value: 'academic', label: 'صياغة أكاديمية' },
+    { value: 'professional', label: 'صياغة مهنية' },
+    { value: 'government', label: 'صياغة رسمية' },
+  ]);
+
+  setLabelForInput('s4-style', 'الطراز المعماري');
+  setPlaceholder('s4-style', 'مثال: حجازي، نجدي، عثماني');
+  setLabelForInput('s4-target-function', 'الوظيفة المستهدفة');
+  setPlaceholder('s4-target-function', 'مثال: متحف، مركز زوار');
+  setLabelForInput('s4-mode', 'نمط الكتابة');
+  setLabelForInput('s4-context-title', 'مرجع مكاني / عمراني');
+  setPlaceholder('s4-context-title', 'ملخص قصير للسياق');
+  setLabelForInput('s4-significance', 'القيمة التراثية');
+  setPlaceholder('s4-significance', 'ما هي أهمية المنشأة تاريخيا ومعماريا وثقافيا؟');
+  setLabelForInput('s4-damage', 'الأضرار والمشاكل الراهنة');
+  setPlaceholder('s4-damage', 'تصدعات، تلف سطوح، إضافات غير متوافقة...');
+  setLabelForInput('s4-strategy', 'استراتيجية التأهيل');
+  setPlaceholder('s4-strategy', 'المبادئ الرئيسية للتدخل والترميم');
+  setLabelForInput('s4-reuse', 'مفهوم إعادة الاستخدام');
+  setPlaceholder('s4-reuse', 'كيف ستتم إعادة استخدام المنشأة؟');
+  setLabelForInput('s4-context', 'السياق الجغرافي والعمراني');
+  setPlaceholder('s4-context', 'العلاقة بالحي والشارع والمشهد الحضري');
+  setLabelForInput('s4-notes', 'ملاحظات إضافية');
+  setPlaceholder('s4-notes', 'أي مراجع أو اشتراطات أو ملاحظات تنظيمية إضافية');
+
+  const processing = document.getElementById('s4-processing');
+  if (processing) {
+    const texts = processing.querySelectorAll('p');
+    if (texts[0]) texts[0].textContent = 'جارٍ إعداد التقرير الأكاديمي...';
+    const detailText = document.getElementById('s4-proc-detail');
+    if (detailText && !detailText.textContent) {
+      detailText.textContent = 'تجميع المخرجات السابقة وإنتاج المحتوى المنظم';
+    }
+  }
+
+  const errorTitle = document.querySelector('#s4-error .text-red-300');
+  if (errorTitle) errorTitle.textContent = 'حدث خطأ';
+
+  setText(document.getElementById('s4-report-title')?.closest('.bg-panelDark')?.querySelector('.text-accent'), 'ملخص التقرير');
+  setText(document.getElementById('s4-sections')?.previousElementSibling, 'أقسام التقرير');
+  setText(document.getElementById('s4-downloads')?.previousElementSibling, 'تحميل المخرجات');
+
+  const successTitle = document.querySelector('#s4-results .text-white.font-bold');
+  if (successTitle) successTitle.textContent = 'اكتمل إنشاء التقرير';
+
+  const resetBtn = document.querySelector('#s4-results button[onclick="s4_reset()"]');
+  if (resetBtn) {
+    resetBtn.innerHTML = '<i data-lucide="rotate-ccw" class="w-4 h-4"></i> تقرير جديد';
+  }
+}
+
+async function s4_submit() {
+  s4_bootstrap();
+  s4_applyArabicFixes();
+
+  const submitBtn = document.getElementById('s4-submit-btn');
+  const proc = document.getElementById('s4-processing');
+  const errBox = document.getElementById('s4-error');
+  const results = document.getElementById('s4-results');
+  const detail = document.getElementById('s4-proc-detail');
+  const bar = document.getElementById('s4-progress-bar');
+
+  submitBtn.classList.add('hidden');
+  errBox.classList.add('hidden');
+  results.classList.add('hidden');
+  proc.classList.remove('hidden');
+  proc.classList.add('flex');
+
+  let progress = 5;
+  const steps = [
+    'تجميع بيانات المشروع وربط المخرجات المرجعية...',
+    'تحليل السياق البصري والمعماري والعمراني...',
+    'إنتاج المحتوى الأكاديمي والمصفوفات المعيارية...',
+    'تجهيز ملفات Word وPDF وExcel وPPTX وJSON...',
+  ];
+  let stepIndex = 0;
+  const tick = setInterval(() => {
+    progress = Math.min(progress + (progress < 70 ? 3 : 0.5), 92);
+    bar.style.width = progress + '%';
+    detail.textContent = steps[Math.min(stepIndex, steps.length - 1)];
+    stepIndex += 1;
+  }, 1600);
+
+  try {
+    const form = new FormData();
+    const fileInput = document.getElementById('file-s4');
+    if (fileInput?.files) for (const file of fileInput.files) form.append('files', file);
+
+    form.append('service1JobId', document.getElementById('s4-s1-job')?.value || '');
+    form.append('service2JobId', document.getElementById('s4-s2-job')?.value || '');
+    form.append('service3JobId', document.getElementById('s4-s3-job')?.value || '');
+    form.append('buildingName', document.getElementById('s4-building-name')?.value || '');
+    form.append('location', document.getElementById('s4-location')?.value || '');
+    form.append('approximateDate', document.getElementById('s4-date')?.value || '');
+    form.append('currentCondition', document.getElementById('s4-condition')?.value || '');
+    form.append('architecturalStyle', document.getElementById('s4-style')?.value || '');
+    form.append('targetFunction', document.getElementById('s4-target-function')?.value || '');
+    form.append('standardProfile', document.getElementById('s4-standards')?.value || 'both');
+    form.append('reportType', document.getElementById('s4-type')?.value || 'تقرير توثيق');
+    form.append('reportMode', document.getElementById('s4-mode')?.value || 'academic');
+    form.append('language', document.getElementById('s4-language')?.value || 'arabic');
+    form.append('depth', document.getElementById('s4-depth')?.value || 'medium');
+    form.append('historicalBackground', document.getElementById('s4-history')?.value || '');
+    form.append('heritageSignificance', document.getElementById('s4-significance')?.value || '');
+    form.append('conditionAndDamage', document.getElementById('s4-damage')?.value || '');
+    form.append('rehabilitationStrategy', document.getElementById('s4-strategy')?.value || '');
+    form.append('adaptiveReuseConcept', document.getElementById('s4-reuse')?.value || '');
+    form.append('geographicContext', document.getElementById('s4-context')?.value || document.getElementById('s4-context-title')?.value || '');
+    form.append('notes', document.getElementById('s4-notes')?.value || '');
+
+    const res = await fetch('/api/service4/generate', { method: 'POST', body: form });
+    const data = await s1_readApiResponse(res);
+    clearInterval(tick);
+    if (!res.ok) throw new Error(data.error || 'تعذر إنشاء التقرير');
+
+    bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 350));
+    s4_showResults(data);
+  } catch (error) {
+    clearInterval(tick);
+    proc.classList.add('hidden');
+    proc.classList.remove('flex');
+    submitBtn.classList.remove('hidden');
+    errBox.classList.remove('hidden');
+    errBox.classList.add('flex');
+    document.getElementById('s4-error-msg').textContent = error.message;
+    lucide.createIcons();
+  }
+}
+
+function s4_showResults(data) {
+  document.getElementById('s4-processing').classList.add('hidden');
+  document.getElementById('s4-processing').classList.remove('flex');
+  document.getElementById('s4-results').classList.remove('hidden');
+
+  document.getElementById('s4-result-count').textContent =
+    `${(data.outputFiles || []).length} ملف مخرج - ${data.provider || 'قالب محلي'}${data.model ? ` / ${data.model}` : ''}`;
   document.getElementById('s4-report-title').textContent =
     data.preview?.title || data.report?.title || 'تقرير أكاديمي';
   document.getElementById('s4-report-summary').textContent =

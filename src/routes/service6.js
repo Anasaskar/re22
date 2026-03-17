@@ -786,11 +786,11 @@ function formatPdfRtlLine(line = '') {
 }
 
 function formatPdfText(value = '', language = 'english') {
-  const text = String(value || '');
-  if (!text || !isRtlLanguage(language) || !containsArabic(text)) return text;
+  const rtlLike = language === 'arabic' || language === 'bilingual';
+  if (!rtlLike) return String(value || '');
 
-  return text
-    .split(/\r?\n/)
+  return String(value || '')
+    .split('\n')
     .map(line => (containsArabic(line) ? formatPdfRtlLine(line) : line))
     .join('\n');
 }

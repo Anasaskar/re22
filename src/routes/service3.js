@@ -191,9 +191,9 @@ function downloadFile(url, dest) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// GPT-4o Urban Analysis
+// Meta Llama Vision Urban Analysis
 // ══════════════════════════════════════════════════════════════════════════
-async function analyzeUrbanWithGPT4o(imagePaths, districtName, city, period, archStyle) {
+async function analyzeUrbanWithVision(imagePaths, districtName, city, period, archStyle) {
   if (!imagePaths || imagePaths.length === 0) {
     return {
       detectedStyle:  archStyle || 'تراثي',
@@ -204,7 +204,7 @@ async function analyzeUrbanWithGPT4o(imagePaths, districtName, city, period, arc
     };
   }
 
-  console.log(`[GPT-4o/S3] Urban analysis — ${imagePaths.length} image(s)...`);
+  console.log(`[Vision/S3] Urban analysis — ${imagePaths.length} image(s)...`);
 
   const imageInputs = imagePaths.slice(0, 3).map(p => {
     const ext  = path.extname(p).slice(1).toLowerCase();
@@ -212,10 +212,11 @@ async function analyzeUrbanWithGPT4o(imagePaths, districtName, city, period, arc
     return `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`;
   });
 
-  const output = await replicate.run('openai/gpt-4o', {
+  const output = await replicate.run('meta/meta-llama-3-2-90b-vision-instruct', {
     input: {
-      system_prompt: 'You are an expert urban heritage analyst specialising in Saudi historic districts. Always respond with valid JSON only.',
-      prompt: `Analyze these aerial / historic images of a heritage district.
+      prompt: `You are an expert urban heritage analyst specialising in Saudi historic districts. Always respond with valid JSON only.
+
+Analyze these aerial / historic images of a heritage district.
 District: ${districtName || 'Unknown'}, City: ${city || 'Unknown'}, Period: ${period || 'Unknown'}.
 User-selected architectural style: ${archStyle || 'تراثي'}.
 
@@ -227,9 +228,9 @@ Return ONLY this JSON, no other text:
   "heritageValue": "High / Medium / Low",
   "restorationNotes": "brief assessment in Arabic or English"
 }`,
-      image_input:          imageInputs,
-      max_completion_tokens: 400,
-      temperature:           0.2,
+      image: imageInputs[0],
+      max_tokens: 400,
+      temperature: 0.2,
     },
   });
 
@@ -238,7 +239,7 @@ Return ONLY this JSON, no other text:
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     if (json) {
       const result = JSON.parse(json);
-      console.log(`[GPT-4o/S3] ✓ Pattern: ${result.urbanPattern} | Value: ${result.heritageValue}`);
+      console.log(`[Vision/S3] ✓ Pattern: ${result.urbanPattern} | Value: ${result.heritageValue}`);
       return result;
     }
     return { detectedStyle: archStyle, urbanPattern: 'Organic', keyFeatures: [], heritageValue: 'High', restorationNotes: text.substring(0, 200) };
@@ -1743,14 +1744,14 @@ router.post('/analyze', (req, res, next) => {
     districtSummary.visualAxisCount = visualAxes.length;
     console.log(`         ✓ ${pedestrianRoutes.length} pedestrian routes | ${publicSpaces.length} public spaces`);
 
-    // ── STEP 1: GPT-4o Urban Analysis ────────────────────────────────────
-    console.log('\n[STEP 1] 🔍 GPT-4o urban analysis...');
+    // ── STEP 1: Vision Urban Analysis ────────────────────────────────────
+    console.log('\n[STEP 1] 🔍 Vision urban analysis...');
     let urbanAnalysis = null;
     try {
-      urbanAnalysis = await analyzeUrbanWithGPT4o(aerialFiles, districtName, city, period, archStyle);
+      urbanAnalysis = await analyzeUrbanWithVision(aerialFiles, districtName, city, period, archStyle);
       console.log(`         ✓ Pattern: ${urbanAnalysis.urbanPattern} | Value: ${urbanAnalysis.heritageValue}`);
     } catch(e) {
-      console.warn('         ⚠ GPT-4o skipped:', e.message);
+      console.warn('         ⚠ Vision analysis skipped:', e.message);
       urbanAnalysis = {
         detectedStyle: archStyle, urbanPattern: 'Organic',
         keyFeatures: ['شوارع تراثية', 'مباني أصيلة', 'فراغات عامة'],

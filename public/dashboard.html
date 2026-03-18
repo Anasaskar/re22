@@ -626,7 +626,7 @@ Do not modernize the building and do not add or imagine any elements that are no
         <div><label class="field-label">نوع التقرير</label>
           <select class="field-input"><option>تقرير توثيق</option><option>تقرير تأهيل</option><option>دراسة جدوى</option></select></div>
         <div><label class="field-label">لغة التقرير</label>
-          <select class="field-input"><option>العربية</option><option>الإنجليزية</option><option>ثنائية اللغة</option></select></div>
+          <select class="field-input"><option>العربية</option><option>الإنجليزية</option></select></div>
         <div><label class="field-label">مستوى التفصيل</label>
           <select class="field-input"><option>موجز</option><option>متوسط</option><option>شامل</option></select></div>
         <div class="col-span-2"><label class="field-label">معلومات تاريخية عن المنشأة</label>
@@ -1881,7 +1881,7 @@ function s4_bootstrap() {
   }
   if (formSelects[3]) {
     formSelects[3].id = 's4-language';
-    formSelects[3].innerHTML = '<option value="arabic">Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©</option><option value="english">Ø§Ù„Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ©</option><option value="bilingual">Ø«Ù†Ø§Ø¦ÙŠØ© Ø§Ù„Ù„ØºØ©</option>';
+    formSelects[3].innerHTML = '<option value="arabic">Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©</option><option value="english">Ø§Ù„Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ©</option>';
   }
   if (formSelects[4]) {
     formSelects[4].id = 's4-depth';
@@ -2215,7 +2215,6 @@ function s4_applyArabicFixes() {
     setSelectOptions(language, [
       { value: 'arabic', label: 'العربية' },
       { value: 'english', label: 'الإنجليزية' },
-      { value: 'bilingual', label: 'ثنائية اللغة' },
     ]);
   }
   const depth = document.getElementById('s4-depth');
@@ -2522,7 +2521,7 @@ function s4_bootstrap() {
   }
   if (formSelects[3]) {
     formSelects[3].id = 's4-language';
-    formSelects[3].innerHTML = '<option value="arabic">العربية</option><option value="english">الإنجليزية</option><option value="bilingual">ثنائية اللغة</option>';
+    formSelects[3].innerHTML = '<option value="arabic">العربية</option><option value="english">الإنجليزية</option>';
   }
   if (formSelects[4]) {
     formSelects[4].id = 's4-depth';
@@ -2721,7 +2720,6 @@ function s4_applyArabicFixes() {
   setSelectOptions(document.getElementById('s4-language'), [
     { value: 'arabic', label: 'العربية' },
     { value: 'english', label: 'الإنجليزية' },
-    { value: 'bilingual', label: 'ثنائية اللغة' },
   ]);
   setSelectOptions(document.getElementById('s4-depth'), [
     { value: 'brief', label: 'موجز' },
@@ -3231,7 +3229,7 @@ function s6_bootstrap() {
   const extraFields = document.createElement('div');
   extraFields.className = 'col-span-2 grid grid-cols-2 gap-4 mt-2';
   extraFields.innerHTML = `
-    <div><label class="field-label">لغة الإخراج</label><select id="s6-language" class="field-input"><option value="bilingual">عربي + English</option><option value="arabic">العربية</option><option value="english">English</option></select></div>
+    <div><label class="field-label">لغة الإخراج</label><select id="s6-language" class="field-input"><option value="arabic">العربية</option><option value="english">English</option></select></div>
     <div><label class="field-label">الخط / Typography</label><input id="s6-typography" type="text" class="field-input" value="Cairo" placeholder="Cairo"></div>
     <div><label class="field-label">اللون الرئيسي</label><input id="s6-primary" type="text" class="field-input" value="#1A3554" placeholder="#1A3554"></div>
     <div><label class="field-label">لون الإبراز</label><input id="s6-accent" type="text" class="field-input" value="#DFAF67" placeholder="#DFAF67"></div>
@@ -3370,7 +3368,7 @@ async function s6_submit() {
     form.append('implementingBody', document.getElementById('s6-implementing-body')?.value || '');
     form.append('consultantTeam', document.getElementById('s6-team')?.value || '');
     form.append('preparationDate', document.getElementById('s6-date')?.value || '');
-    form.append('languageMode', document.getElementById('s6-language')?.value || 'bilingual');
+    form.append('languageMode', document.getElementById('s6-language')?.value || 'arabic');
     form.append('typography', document.getElementById('s6-typography')?.value || 'Cairo');
     form.append('primaryColor', document.getElementById('s6-primary')?.value || '#1A3554');
     form.append('accentColor', document.getElementById('s6-accent')?.value || '#DFAF67');

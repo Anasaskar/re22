@@ -100,6 +100,63 @@ function normalizeText(value, fallback = '') {
   return text || fallback;
 }
 
+const UTF8_MOJIBAKE_RE = /[\u00C2\u00C3\u00D8\u00D9\u00E2\u00F0]/;
+const DISPLAY_TEXT_SEQUENCE_REPLACEMENTS = [
+  ['\u0641\u201A', '\u0642'],
+  ['\u0641\u2021', '\u0647'],
+  ['\u0641\u2030', '\u0649'],
+  ['\u0641\u0192', '\u0643'],
+  ['\u0641\u2018', '\u0651'],
+  ['\u0627\u0641\u2039', '\u0627\u064B'],
+  ['\u0641\u017D', ''],
+  ['\u00D8\u203A', '\u061B'],
+];
+const DISPLAY_TEXT_WORD_REPLACEMENTS = [
+  [/\u0628\u0635\u0631\u064A\u0629\u064A\b/g, '\u0628\u0635\u0631\u064A\u0629'],
+  [/\u0645\u062E\u0635\u0635\u0629\u064A\b/g, '\u0645\u062E\u0635\u0635\u0629'],
+  [/\u0645\u0643\u0627\u0646\u064A\u0629\u064A\b/g, '\u0645\u0643\u0627\u0646\u064A\u0629'],
+  [/\u0645\u0631\u062A\u0628\u0637\u0629\u064A\b/g, '\u0645\u0631\u062A\u0628\u0637\u0629'],
+  [/\u0643\u0627\u0645\u0644\u0629\u064A\b/g, '\u0643\u0627\u0645\u0644\u0629'],
+  [/\u0627\u0644\u0645\u0631\u062C\u0639\u064A\u0629\u064A\b/g, '\u0627\u0644\u0645\u0631\u062C\u0639\u064A\u0629'],
+  [/\u0627\u0644\u0623\u062F\u0644\u0629\u064A\b/g, '\u0627\u0644\u0623\u062F\u0644\u0629'],
+  [/\u0641\u0639\u0644\u064A\u0627\u064A/g, '\u0641\u0639\u0644\u064A\u0627'],
+  [/\u0641\u0642\u0637\u064A/g, '\u0641\u0642\u0637'],
+  [/\u0627\u0644\u0628\u0635\u0631\u064A\u064A/g, '\u0627\u0644\u0628\u0635\u0631\u064A'],
+  [/\u0647\u0627\u0627\u064A/g, '\u0647\u0627'],
+];
+const DISPLAY_TEXT_SYMBOL_REPLACEMENTS = [
+  [/\u2013|\u2014/g, ' - '],
+  [/\u2026/g, '...'],
+  [/\uD83D\uDCD0|\uD83D\uDCC4/g, '-'],
+];
+
+function decodeUtf8Mojibake(value = '') {
+  let text = String(value || '');
+  for (let index = 0; index < 2; index += 1) {
+    if (!UTF8_MOJIBAKE_RE.test(text)) break;
+    const decoded = Buffer.from(text, 'latin1').toString('utf8');
+    if (!decoded || decoded === text || decoded.includes('\uFFFD')) break;
+    text = decoded;
+  }
+  return text;
+}
+
+function repairDisplayText(value = '') {
+  let text = decodeUtf8Mojibake(value);
+
+  DISPLAY_TEXT_SEQUENCE_REPLACEMENTS.forEach(([from, to]) => {
+    text = text.split(from).join(to);
+  });
+  DISPLAY_TEXT_WORD_REPLACEMENTS.forEach(([pattern, replacement]) => {
+    text = text.replace(pattern, replacement);
+  });
+  DISPLAY_TEXT_SYMBOL_REPLACEMENTS.forEach(([pattern, replacement]) => {
+    text = text.replace(pattern, replacement);
+  });
+
+  return text;
+}
+
 function normalizeMultiline(value, fallback = 'Not provided.') {
   const text = normalizeText(value);
   return text || fallback;
@@ -408,9 +465,11 @@ function summarizeUploadedFiles(files = []) {
 
 function labelForLanguage(english, arabic, mode = 'english') {
   const language = normalizeText(mode, 'english').toLowerCase();
-  if (language === 'arabic') return arabic;
-  if (language === 'bilingual') return `${arabic} / ${english}`;
-  return english;
+  const englishText = repairDisplayText(english);
+  const arabicText = repairDisplayText(arabic);
+  if (language === 'arabic') return arabicText;
+  if (language === 'bilingual') return `${arabicText} / ${englishText}`;
+  return englishText;
 }
 
 function neutralizeServiceMentions(value = '', mode = 'english') {
@@ -439,14 +498,16 @@ function neutralizeServiceMentions(value = '', mode = 'english') {
     }
   }
 
-  return text.replace(/\s{2,}/g, ' ').trim();
+  return repairDisplayText(text.replace(/\s{2,}/g, ' ').trim());
 }
 
 function localizeTemplateText(english, arabic, mode = 'english') {
   const language = normalizeText(mode, 'english').toLowerCase();
-  if (language === 'arabic') return arabic;
-  if (language === 'bilingual') return `${arabic}\n\n${english}`;
-  return english;
+  const englishText = repairDisplayText(english);
+  const arabicText = repairDisplayText(arabic);
+  if (language === 'arabic') return arabicText;
+  if (language === 'bilingual') return `${arabicText}\n\n${englishText}`;
+  return englishText;
 }
 
 function containsArabic(value = '') {
@@ -744,13 +805,17 @@ function htmlDirectionAttrs(value = '', mode = 'english', options = {}) {
 }
 
 function capturePdfPages(doc, writer, onPageUsed) {
-  const before = doc.bufferedPageRange().count;
+  const beforeCount = doc.bufferedPageRange().count;
+  const beforeLengths = Array.from({ length: beforeCount }, (_, index) =>
+    doc?._pageBuffer?.[index]?.content?.uncompressedLength || 0,
+  );
   writer();
-  const after = doc.bufferedPageRange().count;
-  const start = Math.max(0, before - 1);
-  const end = Math.max(start, after - 1);
-  for (let index = start; index <= end; index += 1) {
-    onPageUsed(index);
+  const afterCount = doc.bufferedPageRange().count;
+  const end = Math.max(beforeCount, afterCount);
+  for (let index = 0; index < end; index += 1) {
+    const beforeLength = beforeLengths[index] || 0;
+    const afterLength = doc?._pageBuffer?.[index]?.content?.uncompressedLength || 0;
+    if (afterLength > beforeLength) onPageUsed(index);
   }
 }
 
@@ -777,6 +842,35 @@ function trimTrailingBufferedPages(doc, pageIndexes = new Set()) {
   return finalPageCount;
 }
 
+function trimBufferedPages(doc, pageIndexes = new Set()) {
+  const range = doc.bufferedPageRange();
+  const blankPageThreshold = 24;
+  const candidateIndexes = (pageIndexes.size
+    ? Array.from(pageIndexes).sort((a, b) => a - b)
+    : Array.from({ length: range.count }, (_, index) => index))
+    .filter(index => index >= 0 && index < range.count);
+  const keepIndexes = candidateIndexes.filter(index =>
+    (doc?._pageBuffer?.[index]?.content?.uncompressedLength || 0) > blankPageThreshold,
+  );
+
+  if (!keepIndexes.length) keepIndexes.push(0);
+
+  if (Array.isArray(doc._pageBuffer)) {
+    doc._pageBuffer = keepIndexes.map(index => doc._pageBuffer[index]).filter(Boolean);
+    doc._pageBufferStart = 0;
+
+    const pages = doc?._root?.data?.Pages?.data;
+    if (pages && Array.isArray(pages.Kids)) {
+      pages.Kids = keepIndexes.map(index => pages.Kids[index]).filter(Boolean);
+      pages.Count = pages.Kids.length;
+    }
+
+    doc.switchToPage(Math.max(0, keepIndexes.length - 1));
+  }
+
+  return keepIndexes.length;
+}
+
 function formatPdfRtlLine(line = '') {
   const tokens = String(line)
     .split(/(\s+)/)
@@ -786,10 +880,11 @@ function formatPdfRtlLine(line = '') {
 }
 
 function formatPdfText(value = '', language = 'english') {
+  const text = repairDisplayText(value);
   const rtlLike = language === 'arabic' || language === 'bilingual';
-  if (!rtlLike) return String(value || '');
+  if (!rtlLike) return text;
 
-  return String(value || '')
+  return text
     .split('\n')
     .map(line => (containsArabic(line) ? formatPdfRtlLine(line) : line))
     .join('\n');
@@ -798,11 +893,11 @@ function formatPdfText(value = '', language = 'english') {
 function localizedAssetType(type, mode = 'english') {
   return labelForLanguage(type, ({
     image: 'صورة',
-    model: 'نموذج',
+    model: 'نماذج',
     'map-data': 'بيانات خرائط',
     metadata: 'بيانات وصفية',
-    drawing: 'رسم تقني',
-    report: 'تقرير',
+    drawing: 'رسوم تقنية',
+    report: 'تقارير',
     presentation: 'عرض تقديمي',
     spreadsheet: 'جدول بيانات',
     html: 'محتوى ويب',
@@ -869,7 +964,7 @@ function fontFamilyStack(typography = 'Arial', mode = 'english') {
 }
 
 function prepareDirectionalText(value = '', mode = 'english') {
-  const text = String(value || '');
+  const text = repairDisplayText(value);
   if (!text) return text;
   if (!isRtlLanguage(mode) || !containsArabic(text)) return text;
 
@@ -986,7 +1081,7 @@ function describeBuildingRecord(name, assets, brand) {
 
   return localizeTemplateText(
     `${name} is documented through ${assets.length} linked file(s) drawn from ${relatedSources.join(', ') || 'the available source sets'}. The current record includes ${typeMix || 'supporting project files'}. ${hasVisuals ? 'Visual evidence is available.' : 'Visual evidence is limited.'} ${hasModels ? 'Three-dimensional or interactive material is also present.' : ''} ${limitationLine}`,
-    `يوثق ${name} من خلال ${assets.length} ملفا مرتبطا مستمدا من ${relatedSources.join('، ') || 'المصادر المتاحة'}. ويشمل السجل الحالي ${typeMix || 'ملفات مساندة للمشروع'}. ${hasVisuals ? 'تتوفر أدلة بصرية ضمن هذا السجل.' : 'الأدلة البصرية ضمن هذا السجل محدودة.'} ${hasModels ? 'كما تتوفر مواد ثلاثية الأبعاد أو تفاعلية.' : ''} ${limitationLine}`,
+    `يوثق ${name} من خلال ${assets.length} ملف مرتبط مستمد من ${relatedSources.join('، ') || 'المصادر المتاحة'}. ويشمل السجل الحالي ${typeMix || 'ملفات مساندة للمشروع'}. ${hasVisuals ? 'تتوفر أدلة بصرية ضمن هذا السجل.' : 'الأدلة البصرية ضمن هذا السجل محدودة.'} ${hasModels ? 'كما تتوفر مواد ثلاثية الأبعاد أو تفاعلية.' : ''} ${limitationLine}`,
     brand.languageMode,
   ).replace(/\s{2,}/g, ' ').trim();
 }
@@ -1017,7 +1112,7 @@ function buildBrandProfile(input, uploadedFilesSummary) {
     implementingBody: normalizeText(input.implementingBody, 'Not provided'),
     preparationDate: normalizeText(input.preparationDate, new Date().toISOString().slice(0, 10)),
     consultantTeam: normalizeText(input.consultantTeam, 'Not provided'),
-    languageMode: normalizeText(input.languageMode, 'bilingual').toLowerCase(),
+    languageMode: normalizeText(input.languageMode, 'arabic').toLowerCase() === 'english' ? 'english' : 'arabic',
     primaryColor: normalizeText(input.primaryColor, '#1A3554'),
     accentColor: normalizeText(input.accentColor, '#DFAF67'),
     supportColor: normalizeText(input.supportColor, '#E8F1F8'),
@@ -1181,7 +1276,7 @@ function buildBuildingRecords(contentModel, linkedJobs, brand) {
       assets,
       summary: localizeTemplateText(
         `${name} consolidates ${assets.length} files from ${relatedSources.join(', ') || 'project source sets'}.`,
-        `يجمع ملف ${name} عدد ${assets.length} من الملفات من ${relatedSources.join('، ') || 'حزم المصادر المرتبطة بالمشروع'}.`,
+        `يجمع ملف ${name} عدد ${assets.length} من الملفات من ${relatedSources.join('، ') || 'حزمة المصادر المرتبطة بالمشروع'}.`,
         brand.languageMode,
       ),
     };
@@ -1202,7 +1297,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
   const sections = [
     {
       id: 'front_matter',
-      title: labelForLanguage('Front Matter', 'التمهيد', languageMode),
+      title: labelForLanguage('Front Matter', 'المقدمة', languageMode),
       body: localizeTemplateText(
         `${context.brand.projectName} was prepared for ${context.brand.implementingBody}. Date of preparation: ${context.brand.preparationDate}. Consultant / researcher team: ${context.brand.consultantTeam}.`,
         `أُعد ${context.brand.projectName} لصالح ${context.brand.implementingBody}. تاريخ الإعداد: ${context.brand.preparationDate}. الفريق الاستشاري / البحثي: ${context.brand.consultantTeam}.`,
@@ -1214,7 +1309,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: labelForLanguage('Project Overview', 'نظرة عامة على المشروع', languageMode),
       body: localizeTemplateText(
         `${context.brand.projectName} aggregates ${contentModel.counts.totalAssets} deliverable files from ${totalJobs} linked source package(s). The package is organized for documentation, presentation, publication, review, and digital delivery.`,
-        `يجمع ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من ملفات المخرجات من ${totalJobs} مهمة مرتبطة ضمن مراحل المشروع المختلفة. وقد تم تنظيم الحزمة لأغراض التوثيق والعرض والنشر والمراجعة والتسليم الرقمي.`,
+        `يجمع ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من ملفات المخرجات من ${totalJobs} مهة مرتبطة ضمن مراحل المشروع المختلطة. وقد تم تنظيم الحزمة لأغراض التوثيق والعرض والنشر والمراجعة والتسليم الرقمي.`,
         languageMode,
       ),
     },
@@ -1229,7 +1324,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
         )
         : localizeTemplateText(
           'Historical and geographic context should be read alongside the linked reports and maps packaged in this delivery. The current implementation preserves and indexes the available source materials even when structured narrative metadata is limited.',
-          'يُقرأ السياق التاريخي والجغرافي بالتوازي مع التقارير والخرائط المرتبطة والمضمنة في هذه الحزمة. وتحافظ البنية الحالية على المواد المرجعية المتاحة وتفهرسها حتى عند محدودية البيانات السردية المنظمة.',
+          'يُف‚رأ السياف‚ التاريخي والجغرافي بالتوازي مع التف‚ارير والخرائط المرتبطة والمضمنة في ف‡ذف‡ الحزمة. وتحافظ البنية الحالية علف‰ المواد المرجعية المتاحة وتفف‡رسف‡ا حتف‰ عند محدودية البيانات السردية المنظمة.',
           languageMode,
         ),
     },
@@ -1248,12 +1343,12 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       body: service3
         ? localizeTemplateText(
           `Urban outputs include district plans, geospatial datasets, analytical maps, and interactive portfolio material. District-scale coverage includes ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
-          `تشمل المخرجات العمرانية مخططات النطاق، وبيانات جغرافية مكانية، وخرائط تحليلية، ومواد تفاعلية للمحفظة الرقمية. ويشمل نطاق التغطية العمرانية: ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
+          `تشمل المخرجات العمرانية مخططات النطاقي وبيانات جغرافية مفƒانيةي وخرائط تحليليةي ومواد تفاعلية للمحفظة الرف‚مية. ويشمل نطاف‚ التغطية العمرانية: ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
           languageMode,
         )
         : localizeTemplateText(
           'Urban analysis assets were not explicitly linked, but the dossier structure reserves a dedicated section so district-scale materials can be integrated consistently when present.',
-          'لم يتم ربط مواد التحليل العمراني بشكل صريح، إلا أن بنية الوثيقة تحتفظ بقسم مخصص لها بحيث يمكن دمج مواد النطاق العمراني بشكل متسق عند توفرها.',
+          'لم يتم ربط مواد التحليل العمراني بشفƒل صريحي إلا أن بنية الوثيف‚ة تحتفظ بف‚سم مخصص لف‡ا بحيث يمكن دمج مواد النطاق العمراني بشفƒل متسف‚ عند توفرف‡ا.',
           languageMode,
         ),
     },
@@ -1263,12 +1358,12 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       body: service4
         ? localizeTemplateText(
           'Linked standards-oriented report outputs are integrated as supporting evidence for references, methodology, and compliance-oriented communication.',
-          'تم دمج المخرجات المرتبطة ذات الصلة بالمعايير باعتبارها أدلة مساندة للمراجع والمنهجية والصياغة الموجهة للامتثال.',
+          'تم دمج المخرجات المرتبطة ذات الصلة بالمعايير باعتبارف‡ا أدلة مساندة للمراجع والمنف‡جية والصياغة الموجف‡ة للامتثال.',
           languageMode,
         )
         : localizeTemplateText(
           'This package provides placeholders and structured appendices for standards and compliance analysis; richer narrative interpretation can be layered from linked reports or external policy review when required.',
-          'توفر هذه الحزمة مواضع مهيكلة وملاحق منظمة لتحليل المعايير والامتثال، ويمكن إثراؤها لاحقاً بسرد أكثر عمقاً اعتماداً على التقارير المرتبطة أو المراجعات التنظيمية الخارجية عند الحاجة.',
+          'توفر ف‡ذف‡ الحزمة مواضع مف‡يفƒلة وملاحف‚ منظمة لتحليل المعايير والامتثالي ويمكن إثراؤف‡ا لاحف‚اف‹ بسرد أفƒثر عمف‚اف‹ اعتماداف‹ علف‰ التف‚ارير المرتبطة أو المراجعات التنظيمية الخارجية عند الحاجة.',
           languageMode,
         ),
     },
@@ -1277,7 +1372,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: labelForLanguage('Implementation Plan', 'خطة التنفيذ', languageMode),
       body: localizeTemplateText(
         'The delivery package separates source imagery, technical drawings, 3D models, reports, presentations, dossier outputs, digital portfolio files, and media assets into a controlled handover structure. This supports phased review, printing, presentation, and downstream refinement.',
-        'تفصل حزمة التسليم بين الصور المرجعية، والرسومات التقنية، والنماذج ثلاثية الأبعاد، والتقارير، والعروض التقديمية، ومخرجات الوثيقة الشاملة، وملفات المحفظة الرقمية، والمواد الإعلامية ضمن هيكل تسليم منظم. ويدعم ذلك المراجعة المرحلية والطباعة والعرض والتطوير اللاحق.',
+        'تفصل حزمة التسليم بين الصور المرجعيةي والرسومات التف‚نيةي والنماذج ثلاثية الأبعادي والتف‚اريري والعروض التف‚ديميةي ومخرجات الوثيف‚ة الشاملةي وملفات المحفظة الرف‚ميةي والمواد الإعلامية ضمن هيكل تسليم منظم. ويدعم ذلفƒ المراجعة المرحلية والطباعة والعرض والتطوير اللاحف‚.',
         languageMode,
       ),
     },
@@ -1286,7 +1381,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: labelForLanguage('Conclusion', 'الخاتمة', languageMode),
       body: localizeTemplateText(
         `This documentation and media package transforms technical project outputs into a communication-ready documentation set with clear branding, delivery indexing, reusable building templates, and digital-ready presentation outputs. Current file-type coverage: ${typeSummary}.`,
-        `تحول هذه الحزمة التوثيقية والإعلامية مخرجات المشروع التقنية إلى مجموعة توثيقية جاهزة للتواصل والعرض بهوية واضحة وفهرسة للتسليم وقوالب قابلة لإعادة الاستخدام للمباني ومخرجات مناسبة للعروض الرقمية. ويشمل نطاق أنواع الملفات الحالية: ${typeSummary}.`,
+        `تحول ف‡ذف‡ الحزمة التوثيف‚ية والإعلامية مخرجات المشروع التف‚نية إلف‰ مجموعة توثيف‚ية جاف‡زة للتواصل والعرض بف‡وية واضحة وفف‡رسة للتسليم وف‚والب ف‚ابلة لإعادة الاستخدام للمباني ومخرجات مناسبة للعروض الرف‚مية. ويشمل نطاف‚ أنواع الملفات الحالية: ${typeSummary}.`,
         languageMode,
       ),
     },
@@ -1304,34 +1399,34 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: localizeTemplateText('Procedural 3D deliverables', 'مخرجات النمذجة ثلاثية الأبعاد', languageMode),
       note: localizeTemplateText(
         'Interactive viewer and render outputs were incorporated into the media and digital portfolio layers.',
-        'تم إدراج المشاهد التفاعلية ومخرجات الرندرة ضمن طبقات الوسائط والمحفظة الرقمية.',
+        'تم إدراج المشاف‡د التفاعلية ومخرجات الرندرة ضمن طبف‚ات الوسائط والمحفظة الرف‚مية.',
         languageMode,
       ),
     });
   }
 
   return {
-    title: labelForLanguage('Comprehensive Project Dossier', 'الوثيقة التوثيقية الشاملة للمشروع', languageMode),
+    title: labelForLanguage('Comprehensive Project Dossier', 'الوثيف‚ة التوثيف‚ية الشاملة للمشروع', languageMode),
     subtitle: context.brand.projectName,
     executiveSummary: localizeTemplateText(
       `${context.brand.projectName} consolidates ${contentModel.counts.totalAssets} indexed assets into a professional communication package that includes a comprehensive dossier, building-level documents, media-ready outputs, a digital portfolio, and delivery manifests.`,
-      `يوحّد ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من الأصول المفهرسة ضمن حزمة تواصل مهنية تشمل وثيقة شاملة للمشروع، ووثائق على مستوى المباني، ومخرجات إعلامية جاهزة، ومحفظة رقمية، وملفات تسليم منظمة.`,
+      `يوحف‘د ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من الأصول المفف‡رسة ضمن حزمة تواصل مف‡نية تشمل وثيف‚ة شاملة للمشروعي ووثائف‚ علف‰ مستوف‰ المبانيي ومخرجات إعلامية جاف‡زةي ومحفظة رف‚ميةي وملفات تسليم منظمة.`,
       languageMode,
     ),
     methodology: localizeTemplateText(
       'The documentation and media pipeline collects linked project outputs, classifies files by building, district, type, and usage, applies the selected project identity, and generates structured exports for print, presentation, and digital delivery.',
-      'تجمع منظومة التوثيق والإخراج الإعلامي مخرجات المشروع المرتبطة، وتُصنِّف الملفات حسب المبنى والنطاق والنوع والاستخدام، وتطبق الهوية المختارة للمشروع، ثم تولد مخرجات منظمة للطباعة والعرض والتسليم الرقمي.',
+      'تجمع منظومة التوثيف‚ والإخراج الإعلامي مخرجات المشروع المرتبطةي وتُصنف‘ِف الملفات حسب المبنف‰ والنطاق والنوع والاستخدامي وتطبف‚ الف‡وية المختارة للمشروعي ثم تولد مخرجات منظمة للطباعة والعرض والتسليم الرف‚مي.',
       languageMode,
     ),
     buildingRecords,
     sections,
     references,
     appendices: [
-      localizeTemplateText('Asset register and output manifest', 'سجل الأصول وفهرس المخرجات', languageMode),
+      localizeTemplateText('Asset register and output manifest', 'سجل الأصول وفف‡رس المخرجات', languageMode),
       localizeTemplateText('Packaging manifest and delivery README', 'بيانات الحزمة وملف تعليمات التسليم', languageMode),
-      localizeTemplateText('Building document list', 'قائمة وثائق المباني', languageMode),
-      localizeTemplateText('Digital portfolio index', 'فهرس المحفظة الرقمية', languageMode),
-      localizeTemplateText('Media script and captions pack', 'حزمة النصوص الإعلامية والتعليقات', languageMode),
+      localizeTemplateText('Building document list', 'ف‚ائمة وثائف‚ المباني', languageMode),
+      localizeTemplateText('Digital portfolio index', 'فف‡رس المحفظة الرف‚مية', languageMode),
+      localizeTemplateText('Media script and captions pack', 'حزمة النصوص الإعلامية والتعليف‚ات', languageMode),
     ],
   };
 }
@@ -1347,7 +1442,7 @@ function buildBuildingRecords(contentModel, linkedJobs, brand) {
       assets: contentModel.assets.slice(0, 24),
       summary: localizeTemplateText(
         'No distinct building names were submitted, so one project-wide building record will be assembled from the available linked material. This document should be read as a general chapter for the full project rather than a fully separated building schedule.',
-        'لم ترد أسماء مبان مستقلة ضمن البيانات المدخلة، لذلك سيجري تجميع سجل مبنى عام على مستوى المشروع من المواد المرتبطة المتاحة. ويجب قراءة هذا الملف بوصفه فصلا عاما للمشروع الكامل لا جدولا مفصلا لمبان منفصلة.',
+        'لم ترد أسماء مبان مستف‚لة ضمن البيانات المدخلةي لذلفƒ سيجري تجميع سجل مبنف‰ عام علف‰ مستوف‰ المشروع من المواد المرتبطة المتاحة. ويجب ف‚راءة ف‡ذا الملف بوصفف‡ فصلا عاما للمشروع الفƒامل لا جدولا مفصلا لمبان منفصلة.',
         brand.languageMode,
       ),
     }];
@@ -1376,45 +1471,45 @@ function buildDossierModel(context, linkedJobs, contentModel) {
     coverage.hasVisualReferences
       ? localizeTemplateText(
         `Visual references are available, with ${coverage.visualCount} image-based asset(s) supporting review, presentation, and comparison.`,
-        `تتوفر مراجع بصرية، ويشمل ذلك ${coverage.visualCount} أصلا بصريا يدعم المراجعة والعرض والمقارنة.`,
+        `تتوفر مراجع بصريةي ويشمل ذلفƒ ${coverage.visualCount} أصلا بصريا يدعم المراجعة والعرض والمف‚ارنة.`,
         languageMode,
       )
       : localizeTemplateText(
         'No dedicated visual reference set was linked, so visual interpretation remains limited to the files packaged directly within this delivery.',
-        'لم يتم ربط مجموعة مراجع بصرية مخصصة، لذلك يبقى التفسير البصري مقيدا بالملفات المضافة مباشرة داخل هذه الحزمة.',
+        'لم يتم ربط مجموعة مراجع بصرية مخصصةي لذلفƒ يبف‚ف‰ التفسير البصري مف‚يدا بالملفات المضافة مباشرة داخل ف‡ذف‡ الحزمة.',
         languageMode,
       ),
     coverage.hasUrbanAnalysis
       ? localizeTemplateText(
         `Urban and geographic material is present through ${coverage.mapCount} map or spatial dataset(s), allowing the dossier to anchor the project within its broader setting.`,
-        `تتوفر مواد عمرانية وجغرافية من خلال ${coverage.mapCount} من الخرائط أو البيانات المكانية، بما يسمح بربط المشروع بسياقه الأوسع.`,
+        `تتوفر مواد عمرانية وجغرافية من خلال ${coverage.mapCount} من الخرائط أو البيانات المفƒانيةي بما يسمح بربط المشروع بسياف‚ف‡ الأوسع.`,
         languageMode,
       )
       : localizeTemplateText(
         'District-scale and geographic analysis was not explicitly linked, so the dossier records only the available site-level evidence and states that limitation transparently.',
-        'لم يتم ربط تحليل جغرافي أو عمراني على مستوى النطاق بشكل صريح، لذلك تسجل الوثيقة الأدلة المتاحة على مستوى الموقع فقط مع بيان هذا القيد بوضوح.',
+        'لم يتم ربط تحليل جغرافي أو عمراني علف‰ مستوف‰ النطاق بشفƒل صريحي لذلفƒ تسجل الوثيف‚ة الأدلة المتاحة علف‰ مستوف‰ الموف‚ع فف‚ط مع بيان ف‡ذا الف‚يد بوضوح.',
         languageMode,
       ),
     coverage.hasStructuredReporting
       ? localizeTemplateText(
         `Narrative and analytical reporting is available through ${coverage.reportCount} report file(s), enabling stronger methodological and reference framing.`,
-        `يتوفر سرد وتحليل من خلال ${coverage.reportCount} ملف تقرير، ما يدعم صياغة منهجية ومرجعية أوضح.`,
+        `يتوفر سرد وتحليل من خلال ${coverage.reportCount} ملف تف‚ريري ما يدعم صياغة منف‡جية ومرجعية أوضح.`,
         languageMode,
       )
       : localizeTemplateText(
         'Structured narrative reporting was not linked in full, therefore the dossier avoids overstating completeness and limits interpretation to the indexed evidence.',
-        'لم يتم ربط تقارير سردية منظمة بصورة كاملة، ولذلك تتجنب الوثيقة المبالغة في اكتمال المشروع وتحصر التفسير في الأدلة المفهرسة المتاحة.',
+        'لم يتم ربط تف‚ارير سردية منظمة بصورة فƒاملةي ولذلفƒ تتجنب الوثيف‚ة المبالغة في افƒتمال المشروع وتحصر التفسير في الأدلة المفف‡رسة المتاحة.',
         languageMode,
       ),
     coverage.hasThreeDimensionalOutputs
       ? localizeTemplateText(
         `Three-dimensional and interactive content is available through ${coverage.modelCount} model file(s) and ${coverage.interactiveCount} interactive output(s), supporting presentation and design communication.`,
-        `تتوفر مواد ثلاثية الأبعاد وتفاعلية من خلال ${coverage.modelCount} ملف نموذج و${coverage.interactiveCount} مخرجا تفاعليا، بما يدعم العرض والتواصل التصميمي.`,
+        `تتوفر مواد ثلاثية الأبعاد وتفاعلية من خلال ${coverage.modelCount} ملف نموذج و${coverage.interactiveCount} مخرجا تفاعلياي بما يدعم العرض والتواصل التصميمي.`,
         languageMode,
       )
       : localizeTemplateText(
         'No linked three-dimensional package was detected, so the dossier remains focused on documentation and indexed deliverables rather than immersive presentation material.',
-        'لم يتم رصد حزمة ثلاثية الأبعاد مرتبطة، لذلك تظل الوثيقة مركزة على التوثيق والمخرجات المفهرسة بدلا من المواد الغامرة الخاصة بالعرض.',
+        'لم يتم رصد حزمة ثلاثية الأبعاد مرتبطةي لذلفƒ تظل الوثيف‚ة مرفƒزة علف‰ التوثيف‚ والمخرجات المفف‡رسة بدلا من المواد الغامرة الخاصة بالعرض.',
         languageMode,
       ),
   ].join('\n\n');
@@ -1422,54 +1517,54 @@ function buildDossierModel(context, linkedJobs, contentModel) {
   const sections = [
     {
       id: 'project_overview',
-      title: labelForLanguage('Project Overview', 'نظرة عامة على المشروع', languageMode),
+      title: labelForLanguage('Project Overview', 'نظرة عامة علف‰ المشروع', languageMode),
       body: localizeTemplateText(
         `${context.brand.projectName} was prepared for ${context.brand.implementingBody} as a final documentation dossier dated ${context.brand.preparationDate}. The package brings together ${contentModel.counts.totalAssets} indexed asset(s) from ${totalJobs} linked source package(s), while preserving the submitted project identity exactly as entered.`,
-        `أُعد ${context.brand.projectName} لصالح ${context.brand.implementingBody} بوصفه وثيقة توثيق نهائية بتاريخ ${context.brand.preparationDate}. وتجمع الحزمة ${contentModel.counts.totalAssets} أصلا مفهرسا من ${totalJobs} حزمة مصدر مرتبطة، مع الحفاظ على هوية المشروع المدخلة كما وردت تماما.`,
+        `أُعد ${context.brand.projectName} لصالح ${context.brand.implementingBody} بوصفف‡ وثيف‚ة توثيف‚ نف‡ائية بتاريخ ${context.brand.preparationDate}. وتجمع الحزمة ${contentModel.counts.totalAssets} أصلا مفف‡رسا من ${totalJobs} حزمة مصدر مرتبطةي مع الحفاظ علف‰ ف‡وية المشروع المدخلة فƒما وردت تماما.`,
         languageMode,
       ),
     },
     {
       id: 'documentation_scope',
-      title: labelForLanguage('Documentation Scope and Evidence Base', 'نطاق التوثيق وقاعدة الأدلة', languageMode),
+      title: labelForLanguage('Documentation Scope and Evidence Base', 'نطاف‚ التوثيف‚ وف‚اعدة الأدلة', languageMode),
       body: coverageNarrative,
     },
     {
       id: 'historical_context',
-      title: labelForLanguage('Historical and Geographic Context', 'السياق التاريخي والجغرافي', languageMode),
+      title: labelForLanguage('Historical and Geographic Context', 'السياف‚ التاريخي والجغرافي', languageMode),
       body: service3
         ? localizeTemplateText(
           `${normalizeText(service3.metadata?.districtName, 'The project area')} in ${normalizeText(service3.metadata?.city, context.project.projectLocation || 'the referenced location')} is documented through linked district-scale analysis, spatial datasets, and contextual mapping. These materials allow the dossier to position the project within its urban setting rather than describing the property in isolation.\n\nWhere district metadata is partial, the dossier keeps the interpretation conservative and relies only on verifiable linked evidence.`,
-          `يوثق ${normalizeText(service3.metadata?.districtName, 'منطقة المشروع')} في ${normalizeText(service3.metadata?.city, context.project.projectLocation || 'الموقع المرجعي')} من خلال تحليل مرتبط على مستوى النطاق وبيانات مكانية وخرائط سياقية. وتتيح هذه المواد وضع المشروع داخل إطاره العمراني بدلا من وصفه بمعزل عن محيطه.\n\nوعند جزئية بيانات النطاق أو عدم اكتمالها، تحافظ الوثيقة على صياغة متحفظة وتستند فقط إلى الأدلة المرتبطة القابلة للتحقق.`,
+          `يوثف‚ ${normalizeText(service3.metadata?.districtName, 'منطف‚ة المشروع')} في ${normalizeText(service3.metadata?.city, context.project.projectLocation || 'الموف‚ع المرجعي')} من خلال تحليل مرتبط علف‰ مستوف‰ النطاق وبيانات مفƒانية وخرائط سياف‚ية. وتتيح ف‡ذف‡ المواد وضع المشروع داخل إطارف‡ العمراني بدلا من وصفف‡ بمعزل عن محيطف‡.\n\nوعند جزئية بيانات النطاق أو عدم افƒتمالف‡اي تحافظ الوثيف‚ة علف‰ صياغة متحفظة وتستند فف‚ط إلف‰ الأدلة المرتبطة الف‚ابلة للتحف‚ف‚.`,
           languageMode,
         )
         : localizeTemplateText(
           'No linked district-scale context package was provided. Accordingly, this dossier records the project location and the boundaries of the available evidence without claiming a complete historical or geographic interpretation.\n\nAdditional contextual analysis can be incorporated later when verified urban or historical reference material is linked.',
-          'لم يتم توفير حزمة سياق مرتبطة على مستوى النطاق. وبناء على ذلك، تكتفي هذه الوثيقة بتسجيل موقع المشروع وحدود الأدلة المتاحة دون الادعاء بوجود تفسير تاريخي أو جغرافي مكتمل.\n\nويمكن لاحقا دمج تحليل سياقي إضافي عند ربط مواد عمرانية أو تاريخية موثقة.',
+          'لم يتم توفير حزمة سياف‚ مرتبطة علف‰ مستوف‰ النطاق. وبناء علف‰ ذلفƒي تفƒتفي ف‡ذف‡ الوثيف‚ة بتسجيل موف‚ع المشروع وحدود الأدلة المتاحة دون الادعاء بوجود تفسير تاريخي أو جغرافي مفƒتمل.\n\nويمكن لاحف‚ا دمج تحليل سياف‚ي إضافي عند ربط مواد عمرانية أو تاريخية موثف‚ة.',
           languageMode,
         ),
     },
     {
       id: 'building_chapters',
-      title: labelForLanguage('Building Documentation Sections', 'أقسام توثيق المباني', languageMode),
+      title: labelForLanguage('Building Documentation Sections', 'أف‚سام توثيف‚ المباني', languageMode),
       body: localizeTemplateText(
         `Building-level documentation has been prepared for ${buildingRecords.length} building group(s). Each section consolidates the evidence currently available for that building and avoids assuming documentation depth that was not actually linked.\n\nThe emphasis is on producing readable final documentation chapters rather than an asset index alone.`,
-        `أُعد توثيق على مستوى المباني لعدد ${buildingRecords.length} مجموعة مبان. ويجمع كل قسم الأدلة المتاحة فعليا لذلك المبنى دون افتراض عمق توثيقي لم يتم ربطه بالفعل.\n\nوينصب التركيز هنا على إنتاج فصول توثيق نهائية قابلة للقراءة لا مجرد فهرس للأصول.`,
+        `أُعد توثيف‚ علف‰ مستوف‰ المباني لعدد ${buildingRecords.length} مجموعة مبان. ويجمع كل ف‚سم الأدلة المتاحة فعليا لذلفƒ المبنف‰ دون افتراض عمف‚ توثيف‚ي لم يتم ربطف‡ بالفعل.\n\nوينصب الترفƒيز ف‡نا علف‰ إنتاج فصول توثيف‚ نف‡ائية ف‚ابلة للف‚راءة لا مجرد فف‡رس للأصول.`,
         languageMode,
       ),
     },
     {
       id: 'urban_analysis',
-      title: labelForLanguage('Urban Fabric and Spatial Reading', 'تحليل النسيج العمراني والقراءة المكانية', languageMode),
+      title: labelForLanguage('Urban Fabric and Spatial Reading', 'تحليل النسيج العمراني والف‚راءة المفƒانية', languageMode),
       body: service3
         ? localizeTemplateText(
           `The linked spatial set includes plans, geospatial datasets, analytical mapping, and interactive material. These outputs strengthen the dossier by connecting the project to access patterns, district structure, and surrounding urban relationships.\n\nAvailable district notes: ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
-          `تتضمن المجموعة المكانية المرتبطة مخططات وبيانات جغرافية مكانية وخرائط تحليلية ومواد تفاعلية. وتعزز هذه المخرجات الوثيقة من خلال ربط المشروع بأنماط الوصول وبنية النطاق والعلاقات العمرانية المحيطة.\n\nالملاحظات المتاحة عن النطاق: ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
+          `تتضمن المجموعة المفƒانية المرتبطة مخططات وبيانات جغرافية مفƒانية وخرائط تحليلية ومواد تفاعلية. وتعزز ف‡ذف‡ المخرجات الوثيف‚ة من خلال ربط المشروع بأنماط الوصول وبنية النطاق والعلاف‚ات العمرانية المحيطة.\n\nالملاحظات المتاحة عن النطاق: ${compactText(JSON.stringify(service3.metadata?.districtSummary || {}), 220)}.`,
           languageMode,
         )
         : localizeTemplateText(
           'Urban analysis material was not linked. This section therefore records the gap explicitly and keeps the final dossier limited to building-level and project-level evidence that is actually available.',
-          'لم يتم ربط مواد تحليل عمراني. ولذلك يسجل هذا القسم الفجوة بصورة صريحة ويقصر الوثيقة النهائية على الأدلة المتاحة فعليا على مستوى المبنى والمشروع.',
+          'لم يتم ربط مواد تحليل عمراني. ولذلفƒ يسجل ف‡ذا الف‚سم الفجوة بصورة صريحة ويف‚صر الوثيف‚ة النف‡ائية علف‰ الأدلة المتاحة فعليا علف‰ مستوف‰ المبنف‰ والمشروع.',
           languageMode,
         ),
     },
@@ -1479,12 +1574,12 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       body: service4
         ? localizeTemplateText(
           'Linked analytical reporting supports this dossier as reference evidence for standards, methodology, and review requirements. The section is framed as a documentation aid and does not claim regulatory closure unless such closure is explicitly evidenced in the linked material.',
-          'تدعم التقارير التحليلية المرتبطة هذه الوثيقة بوصفها أدلة مرجعية تتصل بالمعايير والمنهجية ومتطلبات المراجعة. ويعرض هذا القسم باعتباره أداة توثيقية مساندة ولا يدعي الحسم التنظيمي إلا إذا كان ذلك مثبتا صراحة في المواد المرتبطة.',
+          'تدعم التف‚ارير التحليلية المرتبطة ف‡ذف‡ الوثيف‚ة بوصفف‡ا أدلة مرجعية تتصل بالمعايير والمنف‡جية ومتطلبات المراجعة. ويعرض ف‡ذا الف‚سم باعتبارف‡ أداة توثيف‚ية مساندة ولا يدعي الحسم التنظيمي إلا إذا فƒان ذلفƒ مثبتا صراحة في المواد المرتبطة.',
           languageMode,
         )
         : localizeTemplateText(
           'No dedicated compliance-oriented report was linked. The dossier therefore limits this chapter to documentation notes, reference placeholders, and a clear statement that additional review material would be required for any formal compliance claim.',
-          'لم يتم ربط تقرير مخصص للامتثال. لذلك يقتصر هذا الفصل على ملاحظات توثيقية ومواضع مرجعية وبيان واضح بأن أي ادعاء رسمي بالامتثال يحتاج إلى مواد مراجعة إضافية.',
+          'لم يتم ربط تف‚رير مخصص للامتثال. لذلفƒ يف‚تصر ف‡ذا الفصل علف‰ ملاحظات توثيف‚ية ومواضع مرجعية وبيان واضح بأن أي ادعاء رسمي بالامتثال يحتاج إلف‰ مواد مراجعة إضافية.',
           languageMode,
         ),
     },
@@ -1493,7 +1588,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: labelForLanguage('Implementation Notes', 'ملاحظات التنفيذ', languageMode),
       body: localizeTemplateText(
         `The final package has been arranged for formal review and downstream use across print, presentation, and digital delivery. Available material has been separated into dossier files, building records, media assets, and structured manifests so the package can be navigated without losing the relationship to its source evidence.\n\nCurrent file-type coverage: ${typeSummary}.`,
-        `رُتبت الحزمة النهائية لتناسب المراجعة الرسمية والاستخدام اللاحق عبر الطباعة والعرض والتسليم الرقمي. وفصلت المواد المتاحة إلى ملفات وثيقة رئيسية وسجلات مبان ومواد إعلامية وفهارس منظمة حتى يسهل التنقل داخل الحزمة من دون فقدان الصلة بأدلتها المرجعية.\n\nويشمل نطاق أنواع الملفات الحالية: ${typeSummary}.`,
+        `رُتبت الحزمة النف‡ائية لتناسب المراجعة الرسمية والاستخدام اللاحف‚ عبر الطباعة والعرض والتسليم الرف‚مي. وفصلت المواد المتاحة إلف‰ ملفات وثيف‚ة رئيسية وسجلات مبان ومواد إعلامية وفف‡ارس منظمة حتف‰ يسف‡ل التنف‚ل داخل الحزمة من دون فف‚دان الصلة بأدلتف‡ا المرجعية.\n\nويشمل نطاف‚ أنواع الملفات الحالية: ${typeSummary}.`,
         languageMode,
       ),
     },
@@ -1502,7 +1597,7 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: labelForLanguage('Conclusion', 'الخاتمة', languageMode),
       body: localizeTemplateText(
         `${context.brand.projectName} is presented here as a polished documentation deliverable built from real linked content, not as a claim of completeness beyond the evidence supplied. Where source packages were missing, the dossier states that limitation directly; where evidence was available, it has been organized into a coherent final record fit for review and presentation.`,
-        `يقدم ${context.brand.projectName} هنا بوصفه مخرجا توثيقيا مصقولا مبنيا على محتوى مرتبط فعليا، لا باعتباره ادعاء باكتمال يتجاوز الأدلة المقدمة. وحيث غابت بعض الحزم المرجعية، تذكر الوثيقة هذا القيد مباشرة؛ وحيث توفرت الأدلة، فقد نظمت في سجل نهائي متماسك صالح للمراجعة والعرض.`,
+        `يف‚دم ${context.brand.projectName} ف‡نا بوصفف‡ مخرجا توثيف‚يا مصف‚ولا مبنيا علف‰ محتوف‰ مرتبط فعلياي لا باعتبارف‡ ادعاء بافƒتمال يتجاوز الأدلة المف‚دمة. وحيث غابت بعض الحزم المرجعيةي تذفƒر الوثيف‚ة ف‡ذا الف‚يد مباشرةØ› وحيث توفرت الأدلةي فف‚د نظمت في سجل نف‡ائي متماسفƒ صالح للمراجعة والعرض.`,
         languageMode,
       ),
     },
@@ -1518,23 +1613,23 @@ function buildDossierModel(context, linkedJobs, contentModel) {
       title: localizeTemplateText('Three-dimensional deliverables', 'مخرجات ثلاثية الأبعاد', languageMode),
       note: localizeTemplateText(
         'Interactive viewer and rendered visual outputs were incorporated where available.',
-        'أدرجت المشاهد التفاعلية والمخرجات المرئية المعالجة حيثما توفرت.',
+        'أدرجت المشاف‡د التفاعلية والمخرجات المرئية المعالجة حيثما توفرت.',
         languageMode,
       ),
     });
   }
 
   return {
-    title: labelForLanguage('Comprehensive Project Dossier', 'الوثيقة التوثيقية الشاملة للمشروع', languageMode),
+    title: labelForLanguage('Comprehensive Project Dossier', 'الوثيف‚ة التوثيف‚ية الشاملة للمشروع', languageMode),
     subtitle: context.brand.projectName,
     executiveSummary: localizeTemplateText(
       `${context.brand.projectName} consolidates ${contentModel.counts.totalAssets} indexed asset(s) into a polished final documentation package centered on a comprehensive dossier, building-level records, and presentation-ready outputs. The narrative is based on real linked evidence only, with missing source areas identified clearly rather than inferred.`,
-      `يوحد ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من الأصول المفهرسة ضمن حزمة توثيق نهائية مصقولة تتمحور حول وثيقة شاملة وسجلات على مستوى المباني ومخرجات جاهزة للعرض. ويستند السرد إلى الأدلة المرتبطة الفعلية فقط، مع بيان مجالات النقص بوضوح بدلا من افتراضها.`,
+      `يوحد ${context.brand.projectName} عدد ${contentModel.counts.totalAssets} من الأصول المفف‡رسة ضمن حزمة توثيف‚ نف‡ائية مصف‚ولة تتمحور حول وثيف‚ة شاملة وسجلات علف‰ مستوف‰ المباني ومخرجات جاف‡زة للعرض. ويستند السرد إلف‰ الأدلة المرتبطة الفعلية فف‚طي مع بيان مجالات النف‚ص بوضوح بدلا من افتراضف‡ا.`,
       languageMode,
     ),
     methodology: localizeTemplateText(
       'The export pipeline assembles linked project materials, classifies them by building, district, source, type, and usage, then renders a unified dossier and companion outputs using language-aware formatting rules. Arabic rendering, RTL direction, and mixed-language handling are treated as export requirements rather than optional styling.',
-      'تجمع منظومة التصدير مواد المشروع المرتبطة وتصنفها حسب المبنى والنطاق والمصدر والنوع والاستخدام، ثم تنتج وثيقة موحدة ومخرجات مساندة باستخدام قواعد تنسيق واعية باللغة. وتعامل سلامة العربية واتجاه اليمين إلى اليسار ومعالجة النصوص المختلطة على أنها متطلبات تصدير أساسية لا مجرد تحسينات شكلية.',
+      'تجمع منظومة التصدير مواد المشروع المرتبطة وتصنفف‡ا حسب المبنف‰ والنطاق والمصدر والنوع والاستخدامي ثم تنتج وثيف‚ة موحدة ومخرجات مساندة باستخدام ف‚واعد تنسيف‚ واعية باللغة. وتعامل سلامة العربية واتجاف‡ اليمين إلف‰ اليسار ومعالجة النصوص المختلطة علف‰ أنف‡ا متطلبات تصدير أساسية لا مجرد تحسينات شفƒلية.',
       languageMode,
     ),
     coverage,
@@ -1542,11 +1637,11 @@ function buildDossierModel(context, linkedJobs, contentModel) {
     sections,
     references,
     appendices: [
-      localizeTemplateText('Asset register and generated output manifest', 'سجل الأصول وفهرس المخرجات الناتجة', languageMode),
+      localizeTemplateText('Asset register and generated output manifest', 'سجل الأصول وفف‡رس المخرجات الناتجة', languageMode),
       localizeTemplateText('Packaging manifest and delivery guidance', 'بيانات الحزمة وإرشادات التسليم', languageMode),
-      localizeTemplateText('Building record list', 'قائمة سجلات المباني', languageMode),
-      localizeTemplateText('Digital portfolio index', 'فهرس المحفظة الرقمية', languageMode),
-      localizeTemplateText('Media script and caption set', 'حزمة النصوص الإعلامية والتعليقات', languageMode),
+      localizeTemplateText('Building record list', 'ف‚ائمة سجلات المباني', languageMode),
+      localizeTemplateText('Digital portfolio index', 'فف‡رس المحفظة الرف‚مية', languageMode),
+      localizeTemplateText('Media script and caption set', 'حزمة النصوص الإعلامية والتعليف‚ات', languageMode),
     ],
   };
 }
@@ -1558,8 +1653,8 @@ function buildReadmeText(context, dossier, outputFiles, packageRootName) {
     '',
     localizeTemplateText(`Package root: ${packageRootName}`, `جذر الحزمة: ${packageRootName}`, context.brand.languageMode),
     localizeTemplateText(`Preparation date: ${context.brand.preparationDate}`, `تاريخ الإعداد: ${context.brand.preparationDate}`, context.brand.languageMode),
-    localizeTemplateText(`Implementing body: ${context.brand.implementingBody}`, `الجهة المنفذة: ${context.brand.implementingBody}`, context.brand.languageMode),
-    localizeTemplateText(`Consultant / researcher team: ${context.brand.consultantTeam}`, `الفريق الاستشاري / البحثي: ${context.brand.consultantTeam}`, context.brand.languageMode),
+    localizeTemplateText(`Implementing body: ${context.brand.implementingBody}`, `الجف‡ة المنفذة: ${context.brand.implementingBody}`, context.brand.languageMode),
+    localizeTemplateText(`Consultant / researcher team: ${context.brand.consultantTeam}`, `الفريف‚ الاستشاري / البحثي: ${context.brand.consultantTeam}`, context.brand.languageMode),
     localizeTemplateText(
       `Language mode: ${localizedLanguageMode(context.brand.languageMode, 'english')}`,
       `لغة الإخراج: ${localizedLanguageMode(context.brand.languageMode, 'arabic')}`,
@@ -1570,20 +1665,20 @@ function buildReadmeText(context, dossier, outputFiles, packageRootName) {
     ...outputFiles.map(file => `- ${file.label}: ${file.relativePath}`),
     '',
     localizeTemplateText('Folder notes:', 'ملاحظات المجلدات:', context.brand.languageMode),
-    localizeTemplateText('- 01_Images: restored images, visualizations, and render-derived stills', '- 01_Images: صور ترميمية ولقطات تصور بصري وصور مشتقة من الرندرة', context.brand.languageMode),
-    localizeTemplateText('- 02_Plans: floor plans, urban plans, vector drawings, and printable sheets', '- 02_Plans: مخططات طوابق ومخططات عمرانية ورسومات متجهية ولوحات قابلة للطباعة', context.brand.languageMode),
-    localizeTemplateText('- 03_3D_Models: print-ready and viewing-ready model exports', '- 03_3D_Models: مخرجات نماذج ثلاثية الأبعاد جاهزة للعرض والطباعة', context.brand.languageMode),
-    localizeTemplateText('- 04_Reports: narrative reports, spreadsheets, metadata, and documentation tables', '- 04_Reports: تقارير سردية وجداول بيانات وبيانات وصفية وجداول توثيقية', context.brand.languageMode),
-    localizeTemplateText('- 05_Presentations: presentation decks and slide-ready summaries', '- 05_Presentations: عروض تقديمية وملخصات جاهزة للشرائح', context.brand.languageMode),
-    localizeTemplateText('- 06_Dossier: comprehensive dossier and building-level documentation', '- 06_Dossier: الوثيقة الشاملة وتوثيق المباني', context.brand.languageMode),
-    localizeTemplateText('- 07_Digital_Portfolio: standalone HTML delivery and portfolio assets', '- 07_Digital_Portfolio: موقع HTML مستقل وأصول المحفظة الرقمية', context.brand.languageMode),
-    localizeTemplateText('- 08_Media: infographic and promotional media support files', '- 08_Media: ملفات الإنفوجرافيك والمواد الإعلامية المساندة', context.brand.languageMode),
+    localizeTemplateText('- 01_Images: restored images, visualizations, and render-derived stills', '- 01_Images: صور ترميمية ولف‚طات تصور بصري وصور مشتف‚ة من الرندرة', context.brand.languageMode),
+    localizeTemplateText('- 02_Plans: floor plans, urban plans, vector drawings, and printable sheets', '- 02_Plans: مخططات طوابف‚ ومخططات عمرانية ورسومات متجف‡ية ولوحات ف‚ابلة للطباعة', context.brand.languageMode),
+    localizeTemplateText('- 03_3D_Models: print-ready and viewing-ready model exports', '- 03_3D_Models: مخرجات نماذج ثلاثية الأبعاد جاف‡زة للعرض والطباعة', context.brand.languageMode),
+    localizeTemplateText('- 04_Reports: narrative reports, spreadsheets, metadata, and documentation tables', '- 04_Reports: تف‚ارير سردية وجداول بيانات وبيانات وصفية وجداول توثيف‚ية', context.brand.languageMode),
+    localizeTemplateText('- 05_Presentations: presentation decks and slide-ready summaries', '- 05_Presentations: عروض تف‚ديمية وملخصات جاف‡زة للشرائح', context.brand.languageMode),
+    localizeTemplateText('- 06_Dossier: comprehensive dossier and building-level documentation', '- 06_Dossier: الوثيف‚ة الشاملة وتوثيف‚ المباني', context.brand.languageMode),
+    localizeTemplateText('- 07_Digital_Portfolio: standalone HTML delivery and portfolio assets', '- 07_Digital_Portfolio: موف‚ع HTML مستف‚ل وأصول المحفظة الرف‚مية', context.brand.languageMode),
+    localizeTemplateText('- 08_Media: infographic and promotional media support files', '- 08_Media: ملفات الإنفوجرافيفƒ والمواد الإعلامية المساندة', context.brand.languageMode),
     '',
     localizeTemplateText('Usage guidance:', 'إرشادات الاستخدام:', context.brand.languageMode),
     localizeTemplateText('- Open PDF files for print-ready review.', '- افتح ملفات PDF للمراجعة والطباعة.', context.brand.languageMode),
-    localizeTemplateText('- Edit DOCX files when narrative customization is needed.', '- حرر ملفات DOCX عند الحاجة إلى تخصيص السرد أو التنسيق.', context.brand.languageMode),
-    localizeTemplateText('- Open PPTX files for decision-maker presentations.', '- افتح ملفات PPTX للعروض الموجهة لأصحاب القرار.', context.brand.languageMode),
-    localizeTemplateText('- Open 07_Digital_Portfolio/HTML_Website/index.html in a browser for the portfolio view.', '- افتح 07_Digital_Portfolio/HTML_Website/index.html في المتصفح لعرض المحفظة الرقمية.', context.brand.languageMode),
+    localizeTemplateText('- Edit DOCX files when narrative customization is needed.', '- حرر ملفات DOCX عند الحاجة إلف‰ تخصيص السرد أو التنسيف‚.', context.brand.languageMode),
+    localizeTemplateText('- Open PPTX files for decision-maker presentations.', '- افتح ملفات PPTX للعروض الموجف‡ة لأصحاب الف‚رار.', context.brand.languageMode),
+    localizeTemplateText('- Open 07_Digital_Portfolio/HTML_Website/index.html in a browser for the portfolio view.', '- افتح 07_Digital_Portfolio/HTML_Website/index.html في المتصفح لعرض المحفظة الرف‚مية.', context.brand.languageMode),
     localizeTemplateText('- Use the Excel manifest to review specifications and generated outputs.', '- استخدم ملف Excel لمراجعة المواصفات والمخرجات الناتجة.', context.brand.languageMode),
   ];
 
@@ -1740,10 +1835,12 @@ function copyAssetsIntoPackage(packageRoot, contentModel, brand) {
     const destination = uniqueDestinationPath(path.join(packageRoot, relativePath));
     ensureDir(path.dirname(destination));
     fs.copyFileSync(asset.path, destination);
+    asset.copiedPath = destination;
+    asset.relativePath = toWebPath(path.relative(packageRoot, destination));
     copiedAssets.push({
       ...asset,
-      copiedPath: destination,
-      relativePath: toWebPath(path.relative(packageRoot, destination)),
+      copiedPath: asset.copiedPath,
+      relativePath: asset.relativePath,
     });
   }
 
@@ -1864,10 +1961,10 @@ async function buildWordDossier(dossier, context, outPath) {
       alignment: AlignmentType.CENTER,
     }),
     new Paragraph({ text: `${context.brand.implementingBody} | ${context.brand.preparationDate}`, alignment: AlignmentType.CENTER }),
-    new Paragraph({ text: `${labelForLanguage('Consultant Team', 'الفريق الاستشاري', context.brand.languageMode)}: ${context.brand.consultantTeam}`, alignment: paragraphAlign }),
+    new Paragraph({ text: `${labelForLanguage('Consultant Team', 'الفريف‚ الاستشاري', context.brand.languageMode)}: ${context.brand.consultantTeam}`, alignment: paragraphAlign }),
     new Paragraph({ text: `${labelForLanguage('Executive Summary', 'الملخص التنفيذي', context.brand.languageMode)}`, heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }),
     new Paragraph({ text: dossier.executiveSummary, alignment: paragraphAlign }),
-    new Paragraph({ text: `${labelForLanguage('Methodology', 'المنهجية', context.brand.languageMode)}`, heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }),
+    new Paragraph({ text: `${labelForLanguage('Methodology', 'المنف‡جية', context.brand.languageMode)}`, heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }),
     new Paragraph({ text: dossier.methodology, alignment: paragraphAlign }),
     new Paragraph({ text: `${labelForLanguage('Table of Contents', 'جدول المحتويات', context.brand.languageMode)}`, heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }),
   ];
@@ -1881,7 +1978,7 @@ async function buildWordDossier(dossier, context, outPath) {
     children.push(new Paragraph({ text: section.body, alignment: paragraphAlign }));
   });
 
-  children.push(new Paragraph({ text: labelForLanguage('Building Documentation', 'توثيق المباني', context.brand.languageMode), heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }));
+  children.push(new Paragraph({ text: labelForLanguage('Building Documentation', 'توثيف‚ المباني', context.brand.languageMode), heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }));
   dossier.buildingRecords.forEach((building, index) => {
     children.push(new Paragraph({ text: `${index + 1}. ${building.name}`, heading: HeadingLevel.HEADING_2, alignment: paragraphAlign }));
     children.push(new Paragraph({ text: building.summary, alignment: paragraphAlign }));
@@ -1892,7 +1989,7 @@ async function buildWordDossier(dossier, context, outPath) {
     children.push(new Paragraph({ text: `${ref.title} - ${ref.note}`, alignment: paragraphAlign }));
   });
 
-  children.push(new Paragraph({ text: labelForLanguage('Appendices', 'الملاحق', context.brand.languageMode), heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }));
+  children.push(new Paragraph({ text: labelForLanguage('Appendices', 'الملاحف‚', context.brand.languageMode), heading: HeadingLevel.HEADING_1, alignment: paragraphAlign }));
   dossier.appendices.forEach(item => {
     children.push(new Paragraph({ text: item, alignment: paragraphAlign }));
   });
@@ -1973,7 +2070,7 @@ async function buildPdfDossier(dossier, context, images, outPath) {
 
       if (dossier.buildingRecords.length) {
         ensureSpace(64);
-        setPdfFont(doc, true).fontSize(13).fillColor(context.brand.primaryColor).text(formatPdfText(labelForLanguage('Building Documentation', 'توثيق المباني', context.brand.languageMode), context.brand.languageMode), { align });
+        setPdfFont(doc, true).fontSize(13).fillColor(context.brand.primaryColor).text(formatPdfText(labelForLanguage('Building Documentation', 'توثيف‚ المباني', context.brand.languageMode), context.brand.languageMode), { align });
         doc.moveDown(0.3);
         dossier.buildingRecords.forEach((building, index) => {
           ensureSpace(46);
@@ -2039,7 +2136,7 @@ async function buildWordBuildingDocument(building, context, outPath) {
   children.push(new Paragraph({
     text: localizeTemplateText(
       `This building file was prepared as part of ${context.brand.projectName}. Available evidence has been grouped for presentation, review, and downstream editing.`,
-      `أُعد هذا الملف الخاص بالمبنى ضمن ${context.brand.projectName}. وقد جُمعت الأدلة المتاحة فيه لأغراض العرض والمراجعة والتحرير اللاحق.`,
+      `أُعد ف‡ذا الملف الخاص بالمبنف‰ ضمن ${context.brand.projectName}. وف‚د جُمعت الأدلة المتاحة فيف‡ لأغراض العرض والمراجعة والتحرير اللاحف‚.`,
       context.brand.languageMode,
     ),
     alignment: paragraphAlign,
@@ -2074,7 +2171,7 @@ async function buildPdfBuildingDocument(building, context, imagePath, outPath) {
 
     setPdfFont(doc, false).fontSize(10).fillColor('#334155').text(formatPdfText(building.summary, context.brand.languageMode), { align: rtlLike ? 'right' : 'justify' });
     doc.moveDown(0.6);
-    setPdfFont(doc, true).fontSize(13).fillColor('#0f172a').text(formatPdfText(labelForLanguage('Available Content', 'المحتوى المتاح', context.brand.languageMode), context.brand.languageMode), { align });
+    setPdfFont(doc, true).fontSize(13).fillColor('#0f172a').text(formatPdfText(labelForLanguage('Available Content', 'المحتوف‰ المتاح', context.brand.languageMode), context.brand.languageMode), { align });
     doc.moveDown(0.2);
 
     building.assets.slice(0, 20).forEach(asset => {
@@ -2091,7 +2188,7 @@ async function buildPdfBuildingDocument(building, context, imagePath, outPath) {
 }
 
 function xmlEscape(value) {
-  return String(value || '')
+  return repairDisplayText(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -2270,31 +2367,31 @@ async function buildExcelManifest(context, dossier, contentModel, deliverables, 
   const languageMode = context.brand.languageMode;
   const summary = workbook.addWorksheet(labelForLanguage('Project Summary', 'ملخص المشروع', languageMode));
   summary.columns = [
-    { header: labelForLanguage('Field', 'الحقل', languageMode), width: 28 },
-    { header: labelForLanguage('Value', 'القيمة', languageMode), width: 70 },
+    { header: labelForLanguage('Field', 'الحف‚ل', languageMode), width: 28 },
+    { header: labelForLanguage('Value', 'الف‚يمة', languageMode), width: 70 },
   ];
   [
     [labelForLanguage('Project Name', 'اسم المشروع', languageMode), context.brand.projectName],
-    [labelForLanguage('Implementing Body', 'الجهة المنفذة', languageMode), context.brand.implementingBody],
+    [labelForLanguage('Implementing Body', 'الجف‡ة المنفذة', languageMode), context.brand.implementingBody],
     [labelForLanguage('Preparation Date', 'تاريخ الإعداد', languageMode), context.brand.preparationDate],
-    [labelForLanguage('Consultant Team', 'الفريق الاستشاري', languageMode), context.brand.consultantTeam],
+    [labelForLanguage('Consultant Team', 'الفريف‚ الاستشاري', languageMode), context.brand.consultantTeam],
     [labelForLanguage('Language Mode', 'لغة الإخراج', languageMode), localizedLanguageMode(context.brand.languageMode, languageMode)],
-    [labelForLanguage('Assets Indexed', 'الأصول المفهرسة', languageMode), contentModel.counts.totalAssets],
+    [labelForLanguage('Assets Indexed', 'الأصول المفف‡رسة', languageMode), contentModel.counts.totalAssets],
     [labelForLanguage('Images', 'الصور', languageMode), contentModel.counts.images],
-    [labelForLanguage('Reports', 'التقارير', languageMode), contentModel.counts.reports],
+    [labelForLanguage('Reports', 'التف‚ارير', languageMode), contentModel.counts.reports],
     [labelForLanguage('Models', 'النماذج', languageMode), contentModel.counts.models],
-    [labelForLanguage('Presentations', 'العروض التقديمية', languageMode), contentModel.counts.presentations],
+    [labelForLanguage('Presentations', 'العروض التف‚ديمية', languageMode), contentModel.counts.presentations],
   ].forEach(row => summary.addRow(row));
 
   const assets = workbook.addWorksheet(labelForLanguage('Asset Register', 'سجل الأصول', languageMode));
   assets.columns = [
     { header: labelForLanguage('Source', 'المصدر', languageMode), width: 28 },
-    { header: labelForLanguage('Building', 'المبنى', languageMode), width: 28 },
+    { header: labelForLanguage('Building', 'المبنف‰', languageMode), width: 28 },
     { header: labelForLanguage('District', 'النطاق', languageMode), width: 28 },
     { header: labelForLanguage('File', 'الملف', languageMode), width: 42 },
     { header: labelForLanguage('Type', 'النوع', languageMode), width: 18 },
     { header: labelForLanguage('Usage', 'الاستخدام', languageMode), width: 24 },
-    { header: labelForLanguage('Size KB', 'الحجم كيلوبايت', languageMode), width: 12 },
+    { header: labelForLanguage('Size KB', 'الحجم فƒيلوبايت', languageMode), width: 12 },
   ];
   contentModel.assets.forEach(asset => {
     assets.addRow([
@@ -2318,7 +2415,7 @@ async function buildExcelManifest(context, dossier, contentModel, deliverables, 
 
   const buildings = workbook.addWorksheet(labelForLanguage('Buildings', 'المباني', languageMode));
   buildings.columns = [
-    { header: labelForLanguage('Building', 'المبنى', languageMode), width: 34 },
+    { header: labelForLanguage('Building', 'المبنف‰', languageMode), width: 34 },
     { header: labelForLanguage('Summary', 'الملخص', languageMode), width: 90 },
   ];
   dossier.buildingRecords.forEach(building => buildings.addRow([building.name, building.summary]));
@@ -2351,13 +2448,13 @@ function buildInfographicSvg(context, contentModel, dossier) {
   <text x="84" y="122" font-size="28" font-family="Arial" font-weight="700" fill="#ffffff">${xmlEscape(context.brand.projectName)}</text>
   <text x="84" y="156" font-size="16" font-family="Arial" fill="#dbeafe">${xmlEscape(dossier.title)}</text>
   <text x="84" y="220" font-size="64" font-family="Arial" font-weight="700" fill="${context.brand.accentColor}">${contentModel.counts.totalAssets}</text>
-  <text x="84" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Indexed project assets', 'أصول المشروع المفهرسة', languageMode))}</text>
+  <text x="84" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Indexed project assets', 'أصول المشروع المفف‡رسة', languageMode))}</text>
   <text x="430" y="220" font-size="64" font-family="Arial" font-weight="700" fill="#38bdf8">${dossier.buildingRecords.length}</text>
-  <text x="430" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Building document groups', 'مجموعات وثائق المباني', languageMode))}</text>
+  <text x="430" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Building document groups', 'مجموعات وثائف‚ المباني', languageMode))}</text>
   <text x="760" y="220" font-size="64" font-family="Arial" font-weight="700" fill="#10b981">${contentModel.counts.html + contentModel.counts.presentations + contentModel.counts.models}</text>
-  <text x="760" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Digital and presentation outputs', 'المخرجات الرقمية والعرضية', languageMode))}</text>
+  <text x="760" y="250" font-size="18" font-family="Arial" fill="#e2e8f0">${xmlEscape(labelForLanguage('Digital and presentation outputs', 'المخرجات الرف‚مية والعرضية', languageMode))}</text>
   ${sourceBlocks}
-  <text x="84" y="740" font-size="18" font-family="Arial" fill="#f8fafc">${xmlEscape(labelForLanguage('Coverage', 'نطاق التغطية', languageMode))}</text>
+  <text x="84" y="740" font-size="18" font-family="Arial" fill="#f8fafc">${xmlEscape(labelForLanguage('Coverage', 'نطاف‚ التغطية', languageMode))}</text>
   <text x="84" y="772" font-size="15" font-family="Arial" fill="#cbd5e1">${xmlEscape(dossier.executiveSummary)}</text>
 </svg>`;
 }
@@ -2386,22 +2483,22 @@ async function buildInfographics(context, contentModel, dossier, mediaDir) {
 function buildPromoScript(context, dossier, contentModel) {
   return [
     localizeTemplateText(`Project: ${context.brand.projectName}`, `المشروع: ${context.brand.projectName}`, context.brand.languageMode),
-    localizeTemplateText(`Style direction: ${context.project.brandingPreferences}`, `توجه الهوية: ${context.project.brandingPreferences}`, context.brand.languageMode),
+    localizeTemplateText(`Style direction: ${context.project.brandingPreferences}`, `توجف‡ الف‡وية: ${context.project.brandingPreferences}`, context.brand.languageMode),
     '',
-    localizeTemplateText('Suggested short promo structure:', 'هيكل مقترح للمادة الترويجية القصيرة:', context.brand.languageMode),
-    localizeTemplateText('1. Opening title card with project identity and implementing body.', '1. افتتاحية بعنوان المشروع والجهة المنفذة.', context.brand.languageMode),
-    localizeTemplateText('2. Present the heritage context with restored visuals and key urban imagery.', '2. عرض السياق التراثي من خلال الصور المعالجة واللقطات العمرانية الأساسية.', context.brand.languageMode),
-    localizeTemplateText('3. Highlight architectural visualizations, building plans, and analytical reports.', '3. إبراز التصورات المعمارية والمخططات وتقارير التحليل.', context.brand.languageMode),
-    localizeTemplateText('4. Introduce 3D models, digital portfolio outputs, and implementation readiness.', '4. تقديم النماذج ثلاثية الأبعاد ومخرجات المحفظة الرقمية وجاهزية التنفيذ.', context.brand.languageMode),
-    localizeTemplateText('5. Close with the dossier, delivery package, and project impact statement.', '5. اختتام المادة بالوثيقة الشاملة وحزمة التسليم وأثر المشروع.', context.brand.languageMode),
+    localizeTemplateText('Suggested short promo structure:', 'هيكل مف‚ترح للمادة الترويجية الف‚صيرة:', context.brand.languageMode),
+    localizeTemplateText('1. Opening title card with project identity and implementing body.', '1. افتتاحية بعنوان المشروع والجف‡ة المنفذة.', context.brand.languageMode),
+    localizeTemplateText('2. Present the heritage context with restored visuals and key urban imagery.', '2. عرض السياف‚ التراثي من خلال الصور المعالجة واللف‚طات العمرانية الأساسية.', context.brand.languageMode),
+    localizeTemplateText('3. Highlight architectural visualizations, building plans, and analytical reports.', '3. إبراز التصورات المعمارية والمخططات وتف‚ارير التحليل.', context.brand.languageMode),
+    localizeTemplateText('4. Introduce 3D models, digital portfolio outputs, and implementation readiness.', '4. تف‚ديم النماذج ثلاثية الأبعاد ومخرجات المحفظة الرف‚مية وجاف‡زية التنفيذ.', context.brand.languageMode),
+    localizeTemplateText('5. Close with the dossier, delivery package, and project impact statement.', '5. اختتام المادة بالوثيف‚ة الشاملة وحزمة التسليم وأثر المشروع.', context.brand.languageMode),
     '',
-    localizeTemplateText(`Voiceover draft: ${dossier.executiveSummary}`, `مسودة التعليق الصوتي: ${dossier.executiveSummary}`, context.brand.languageMode),
+    localizeTemplateText(`Voiceover draft: ${dossier.executiveSummary}`, `مسودة التعليف‚ الصوتي: ${dossier.executiveSummary}`, context.brand.languageMode),
     '',
-    localizeTemplateText('Key figures:', 'الأرقام الرئيسية:', context.brand.languageMode),
-    localizeTemplateText(`- Total indexed assets: ${contentModel.counts.totalAssets}`, `- إجمالي الأصول المفهرسة: ${contentModel.counts.totalAssets}`, context.brand.languageMode),
+    localizeTemplateText('Key figures:', 'الأرف‚ام الرئيسية:', context.brand.languageMode),
+    localizeTemplateText(`- Total indexed assets: ${contentModel.counts.totalAssets}`, `- إجمالي الأصول المفف‡رسة: ${contentModel.counts.totalAssets}`, context.brand.languageMode),
     localizeTemplateText(`- Building groups: ${dossier.buildingRecords.length}`, `- مجموعات المباني: ${dossier.buildingRecords.length}`, context.brand.languageMode),
     localizeTemplateText(`- Models: ${contentModel.counts.models}`, `- النماذج: ${contentModel.counts.models}`, context.brand.languageMode),
-    localizeTemplateText(`- Reports: ${contentModel.counts.reports}`, `- التقارير: ${contentModel.counts.reports}`, context.brand.languageMode),
+    localizeTemplateText(`- Reports: ${contentModel.counts.reports}`, `- التف‚ارير: ${contentModel.counts.reports}`, context.brand.languageMode),
   ].join('\n');
 }
 
@@ -2409,17 +2506,17 @@ function buildSocialCaptions(context, contentModel) {
   return [
     localizeTemplateText(
       `Caption 1: ${context.brand.projectName} now includes a complete documentation and media package integrating restored imagery, heritage analysis, plans, reports, and 3D assets.`,
-      `التعليق 1: يتضمن ${context.brand.projectName} الآن حزمة توثيق وإخراج إعلامي متكاملة تجمع الصور المعالجة والتحليل التراثي والمخططات والتقارير والأصول ثلاثية الأبعاد.`,
+      `التعليف‚ 1: يتضمن ${context.brand.projectName} الآن حزمة توثيف‚ وإخراج إعلامي متفƒاملة تجمع الصور المعالجة والتحليل التراثي والمخططات والتف‚ارير والأصول ثلاثية الأبعاد.`,
       context.brand.languageMode,
     ),
     localizeTemplateText(
       `Caption 2: From restoration to presentation-ready delivery, the package organizes ${contentModel.counts.totalAssets} outputs into a professional handover format for review, publication, and digital sharing.`,
-      `التعليق 2: من الترميم إلى التسليم الجاهز للعرض، تنظم الحزمة عدد ${contentModel.counts.totalAssets} من المخرجات ضمن صيغة مهنية للمراجعة والنشر والمشاركة الرقمية.`,
+      `التعليف‚ 2: من الترميم إلف‰ التسليم الجاف‡ز للعرضي تنظم الحزمة عدد ${contentModel.counts.totalAssets} من المخرجات ضمن صيغة مف‡نية للمراجعة والنشر والمشارفƒة الرف‚مية.`,
       context.brand.languageMode,
     ),
     localizeTemplateText(
       'Caption 3: The project portfolio supports dossier preparation, building-level documentation, interactive browsing, and media-ready communication assets.',
-      'التعليق 3: تدعم محفظة المشروع إعداد الوثيقة الشاملة وتوثيق المباني والتصفح التفاعلي وأصول التواصل الجاهزة للإخراج الإعلامي.',
+      'التعليف‚ 3: تدعم محفظة المشروع إعداد الوثيف‚ة الشاملة وتوثيف‚ المباني والتصفح التفاعلي وأصول التواصل الجاف‡زة للإخراج الإعلامي.',
       context.brand.languageMode,
     ),
   ].join('\n\n');
@@ -2490,14 +2587,14 @@ function buildPortfolioHtml(context, dossier, copiedAssets, outPath) {
       <h1>${xmlEscape(context.brand.projectName)}</h1>
       <p>${xmlEscape(dossier.executiveSummary)}</p>
       <div class="grid">
-        <div class="panel"><strong>${copiedAssets.length}</strong><p>${xmlEscape(labelForLanguage('Packaged files copied into the structured delivery folder.', 'ملفات منسوخة إلى مجلد التسليم المنظم.', context.brand.languageMode))}</p></div>
-        <div class="panel"><strong>${dossier.buildingRecords.length}</strong><p>${xmlEscape(labelForLanguage('Building-level documentation groups.', 'مجموعات توثيق على مستوى المباني.', context.brand.languageMode))}</p></div>
+        <div class="panel"><strong>${copiedAssets.length}</strong><p>${xmlEscape(labelForLanguage('Packaged files copied into the structured delivery folder.', 'ملفات منسوخة إلف‰ مجلد التسليم المنظم.', context.brand.languageMode))}</p></div>
+        <div class="panel"><strong>${dossier.buildingRecords.length}</strong><p>${xmlEscape(labelForLanguage('Building-level documentation groups.', 'مجموعات توثيف‚ علف‰ مستوف‰ المباني.', context.brand.languageMode))}</p></div>
         <div class="panel"><strong>${Object.keys(context.contentModel.bySource).length}</strong><p>${xmlEscape(labelForLanguage('Integrated source sets.', 'حزم مصادر مترابطة.', context.brand.languageMode))}</p></div>
       </div>
     </section>
 
     <section>
-      <h2>${xmlEscape(labelForLanguage('Building Documentation', 'توثيق المباني', context.brand.languageMode))}</h2>
+      <h2>${xmlEscape(labelForLanguage('Building Documentation', 'توثيف‚ المباني', context.brand.languageMode))}</h2>
       <div class="grid">${cards}</div>
     </section>
 
@@ -2507,8 +2604,8 @@ function buildPortfolioHtml(context, dossier, copiedAssets, outPath) {
     </section>
 
     <section>
-      <h2>${xmlEscape(labelForLanguage('Interactive Embeds', 'محتوى تفاعلي', context.brand.languageMode))}</h2>
-      <div class="embeds">${iframeBlocks || `<div class="panel"><p>${xmlEscape(labelForLanguage('No interactive HTML outputs were linked. The package still includes standalone files and structured navigation.', 'لم يتم ربط مخرجات HTML تفاعلية، ومع ذلك تتضمن الحزمة ملفات مستقلة وتنقلاً منظماً.', context.brand.languageMode))}</p></div>`}</div>
+      <h2>${xmlEscape(labelForLanguage('Interactive Embeds', 'محتوف‰ تفاعلي', context.brand.languageMode))}</h2>
+      <div class="embeds">${iframeBlocks || `<div class="panel"><p>${xmlEscape(labelForLanguage('No interactive HTML outputs were linked. The package still includes standalone files and structured navigation.', 'لم يتم ربط مخرجات HTML تفاعليةي ومع ذلفƒ تتضمن الحزمة ملفات مستف‚لة وتنف‚لاف‹ منظماف‹.', context.brand.languageMode))}</p></div>`}</div>
     </section>
   </div>
 </body>
@@ -2526,14 +2623,220 @@ function createWordNarrativeParagraphs(text, context, options = {}) {
   }));
 }
 
+function hasRenderableText(value = '') {
+  return splitNarrativeParagraphs(value).length > 0;
+}
+
+function hasRenderableSection(section = {}) {
+  return Boolean(normalizeText(section?.title)) && hasRenderableText(section?.body);
+}
+
+function hasRenderableBuildingRecord(building = {}) {
+  return Boolean(normalizeText(building?.name)) && hasRenderableText(building?.summary);
+}
+
+function hasRenderableReference(ref = {}) {
+  return Boolean(normalizeText(ref?.title) || normalizeText(ref?.note));
+}
+
+function assetRecordKey(asset = {}) {
+  return normalizeText(
+    asset?.id
+    || asset?.copiedPath
+    || asset?.path
+    || `${normalizeText(asset?.name)}:${normalizeText(asset?.service)}:${normalizeText(asset?.type)}`,
+  );
+}
+
+function uniqueAssets(assets = []) {
+  const seen = new Set();
+  return assets.filter(asset => {
+    const key = assetRecordKey(asset);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatAssetReference(asset = {}, languageMode = 'english') {
+  const name = normalizeText(asset?.name, labelForLanguage('Unnamed file', 'ملف بدون اسم', languageMode));
+  const typeLabel = localizedAssetType(asset?.type, languageMode);
+  const relativePath = normalizeText(asset?.relativePath);
+  return relativePath
+    ? `${name} (${typeLabel}) - ${relativePath}`
+    : `${name} (${typeLabel})`;
+}
+
+function collectDossierAssetGroups(assetsInput = []) {
+  const assets = uniqueAssets((assetsInput || []).filter(asset => asset && asset.copiedPath && asset.usage !== 'logo'));
+  const webImages = assets.filter(asset => isWebReadyImage(fileExt(asset.copiedPath)));
+  const splitServiceAssets = service => {
+    const serviceAssets = assets.filter(asset => asset.service === service);
+    return {
+      assets: serviceAssets,
+      imageAssets: serviceAssets.filter(asset => isWebReadyImage(fileExt(asset.copiedPath))),
+      fileAssets: serviceAssets.filter(asset => !isWebReadyImage(fileExt(asset.copiedPath))),
+    };
+  };
+
+  return {
+    assets,
+    heroImage: webImages[0] || null,
+    service1: splitServiceAssets(1),
+    service2: splitServiceAssets(2),
+    service3: splitServiceAssets(3),
+    service4: splitServiceAssets(4),
+    service5: splitServiceAssets(5),
+  };
+}
+
+function collectProjectWideAssetGroups(context = {}) {
+  const assets = (context.contentModel?.assets || []).filter(asset => normalizeText(asset?.building, 'Project-wide') === 'Project-wide');
+  return collectDossierAssetGroups(assets);
+}
+
+function buildCoverageSummaryLines(coverage = {}, languageMode = 'english') {
+  return [
+    localizeTemplateText(
+      `Visual assets indexed: ${coverage.visualCount || 0}.`,
+      `عدد الأصول البصرية المفهرسة: ${coverage.visualCount || 0}.`,
+      languageMode,
+    ),
+    localizeTemplateText(
+      `Architectural drawings indexed: ${coverage.drawingCount || 0}.`,
+      `عدد الرسومات والمخططات المعمارية المفهرسة: ${coverage.drawingCount || 0}.`,
+      languageMode,
+    ),
+    localizeTemplateText(
+      `Reports and narrative documents indexed: ${coverage.reportCount || 0}.`,
+      `عدد التقارير والوثائق السردية المفهرسة: ${coverage.reportCount || 0}.`,
+      languageMode,
+    ),
+    localizeTemplateText(
+      `Three-dimensional models indexed: ${coverage.modelCount || 0}, with ${coverage.interactiveCount || 0} interactive output(s).`,
+      `عدد النماذج ثلاثية الأبعاد المفهرسة: ${coverage.modelCount || 0} مع ${coverage.interactiveCount || 0} مخرج تفاعلي.`,
+      languageMode,
+    ),
+    localizeTemplateText(
+      `Urban and geographic files indexed: ${coverage.mapCount || 0}.`,
+      `عدد الملفات العمرانية والجغرافية المفهرسة: ${coverage.mapCount || 0}.`,
+      languageMode,
+    ),
+  ].filter(hasRenderableText);
+}
+
+function getHistoricalNarrative(context = {}) {
+  const languageMode = context.brand?.languageMode || 'english';
+  const service4 = context.linkedJobs?.find(job => job.service === 4) || null;
+  return service4?.metadata?.project?.description
+    || service4?.metadata?.summary
+    || labelForLanguage(
+      'Historical analysis was prepared as part of the academic reporting phase. Refer to linked reports for the full narrative detail.',
+      'أعد التحليل التاريخي ضمن مرحلة التقارير الأكاديمية. يرجى الرجوع إلى التقارير المرتبطة للاطلاع على السرد الكامل.',
+      languageMode,
+    );
+}
+
+function getOrderedServiceDossierChapters(assetGroups = {}, languageMode = 'english', options = {}) {
+  const scope = options.scope === 'project' ? 'project' : 'building';
+  const historicalNarrative = normalizeText(options.historicalNarrative);
+  const chapterDefs = [
+    {
+      key: 'service1',
+      titleEn: 'Before / After Photos',
+      titleAr: 'صور قبل/بعد',
+      introEn: scope === 'project'
+        ? 'Project-level before/after, condition, and restoration imagery.'
+        : 'Visual restoration and condition-reference images linked to this building.',
+      introAr: scope === 'project'
+        ? 'يتضمن هذا القسم صور قبل/بعد وصور الحالة الراهنة وصور الترميم المرتبطة على مستوى المشروع.'
+        : 'صور مرجعية بصرية وصور ترميم مرتبطة بهذا المبنى.',
+    },
+    {
+      key: 'service2',
+      titleEn: 'Architectural Drawings',
+      titleAr: 'المخططات والرسومات المعمارية',
+      introEn: scope === 'project'
+        ? 'Project-level plans, drawings, and architectural graphic packages.'
+        : 'Plans, drawings, sections, and architectural graphic material linked to this building.',
+      introAr: scope === 'project'
+        ? 'يتضمن هذا القسم المخططات والرسومات والحزم المعمارية المرتبطة على مستوى المشروع.'
+        : 'يتضمن هذا القسم المخططات والرسومات والقطاعات والمواد المعمارية المرتبطة بهذا المبنى.',
+    },
+    {
+      key: 'service3',
+      titleEn: '2D / 3D Visualizations',
+      titleAr: 'التصورات الثنائية والثلاثية الأبعاد',
+      introEn: scope === 'project'
+        ? 'Project-level rendered studies, model packages, and visualization outputs.'
+        : 'Rendered studies, models, and visualization outputs prepared for this building.',
+      introAr: scope === 'project'
+        ? 'يشمل هذا القسم الدراسات الإخراجية وحزم النماذج ومخرجات التصور المرتبطة على مستوى المشروع.'
+        : 'يشمل هذا القسم الدراسات الإخراجية والنماذج ومخرجات التصور المعدة لهذا المبنى.',
+    },
+    {
+      key: 'service4',
+      titleEn: 'Historical Analysis',
+      titleAr: 'التحليل التاريخي',
+      introEn: scope === 'project'
+        ? 'Historical analysis and academic narrative linked at project level.'
+        : 'Historical analysis and academic narrative linked to this building.',
+      introAr: scope === 'project'
+        ? 'يتضمن هذا القسم التحليل التاريخي والسرد الأكاديمي المرتبطين على مستوى المشروع.'
+        : 'يتضمن هذا القسم التحليل التاريخي والسرد الأكاديمي المرتبطين بهذا المبنى.',
+      useHistoricalNarrative: true,
+    },
+    {
+      key: 'service5',
+      titleEn: 'Reports, Data, and Technical Files',
+      titleAr: 'التقارير والبيانات والملفات الفنية',
+      introEn: scope === 'project'
+        ? 'Project-level reports, datasets, and technical documentation.'
+        : 'Reports, datasets, and technical documentation linked to this building.',
+      introAr: scope === 'project'
+        ? 'يتضمن هذا القسم التقارير والبيانات والوثائق الفنية المرتبطة على مستوى المشروع.'
+        : 'يتضمن هذا القسم التقارير والبيانات والوثائق الفنية الخاصة بهذا المبنى.',
+    },
+  ];
+
+  return chapterDefs.map(def => {
+    const bucket = assetGroups?.[def.key] || {};
+    const imageAssets = bucket.imageAssets || [];
+    const fileAssets = bucket.fileAssets || [];
+    const assets = bucket.assets || [];
+    if (!assets.length) return null;
+    return {
+      title: labelForLanguage(def.titleEn, def.titleAr, languageMode),
+      intro: def.useHistoricalNarrative && historicalNarrative
+        ? historicalNarrative
+        : labelForLanguage(def.introEn, def.introAr, languageMode),
+      imageAssets,
+      fileAssets,
+    };
+  }).filter(Boolean);
+}
+
 async function buildWordDossier(dossier, context, outPath) {
   if (!Document) {
     fs.writeFileSync(outPath, 'docx unavailable');
     return;
   }
 
-  const rtlLike = isRtlLanguage(context.brand.languageMode);
+  const lang = context.brand.languageMode;
+  const rtlLike = isRtlLanguage(lang);
   const paragraphAlign = rtlLike ? AlignmentType.RIGHT : AlignmentType.LEFT;
+  const lbl = (en, ar) => labelForLanguage(en, ar, lang);
+  const sections = (dossier.sections || []).filter(hasRenderableSection);
+  const buildingRecords = (dossier.buildingRecords || []).filter(hasRenderableBuildingRecord);
+  const references = (dossier.references || []).filter(hasRenderableReference);
+  const appendices = (dossier.appendices || []).map(item => normalizeText(item)).filter(Boolean);
+  const coverageLines = buildCoverageSummaryLines(dossier.coverage || {}, lang);
+  const projectWideAssets = collectProjectWideAssetGroups(context);
+  const historicalNarrative = getHistoricalNarrative(context);
+  const projectWideServiceChapters = getOrderedServiceDossierChapters(projectWideAssets, lang, {
+    scope: 'project',
+    historicalNarrative,
+  });
   const children = [];
   const logo = await prepareLogoPlacement(context.brand.logoPath, path.dirname(outPath), {
     forcePng: true,
@@ -2559,6 +2862,202 @@ async function buildWordDossier(dossier, context, outPath) {
     }
   }
 
+  const wordHeading = (text, level, opts = {}) => createWordParagraph(text, context, {
+    heading: level,
+    alignment: paragraphAlign,
+    bold: true,
+    ...opts,
+  });
+
+  const wordBody = text => {
+    children.push(...createWordNarrativeParagraphs(text, context, { alignment: paragraphAlign }));
+  };
+
+  const wordAssetLine = asset => createWordParagraph(`- ${formatAssetReference(asset, lang)}`, context, {
+    alignment: paragraphAlign,
+    spacing: { line: 320, before: 20, after: 40 },
+  });
+
+  const wordAssetList = assets => {
+    assets.forEach(asset => children.push(wordAssetLine(asset)));
+  };
+
+  const wordImageRun = async (assetPath, width = 380) => {
+    const renderPath = await resolveRenderableImagePath(assetPath, path.dirname(outPath), {
+      forcePng: true,
+      suffix: 'word_asset',
+    });
+    if (!ImageRun || !renderPath || !fs.existsSync(renderPath)) return null;
+    try {
+      const data = fs.readFileSync(renderPath);
+      const ext = fileExt(renderPath).replace('.', '');
+      const typeMap = { jpg: 'jpg', jpeg: 'jpg', png: 'png' };
+      return new ImageRun({
+        data,
+        type: typeMap[ext] || 'png',
+        transformation: { width, height: Math.round(width * 0.6) },
+      });
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const wordImageParagraph = async (assetPath, caption, width = 380) => {
+    const run = await wordImageRun(assetPath, width);
+    if (!run) return;
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 80, after: 40 },
+      children: [run],
+    }));
+    if (caption) {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 100 },
+        children: [new TextRun({ text: caption, size: 18, color: '475569', italics: true })],
+      }));
+    }
+  };
+
+  const pushAssetChapter = async (title, intro, imageAssets = [], fileAssets = [], options = {}) => {
+    if (!hasRenderableText(intro) && !imageAssets.length && !fileAssets.length) return;
+    children.push(wordHeading(title, options.level || HeadingLevel.HEADING_2, {
+      spacing: options.spacing || { before: 180, after: 80 },
+    }));
+    if (hasRenderableText(intro)) wordBody(intro);
+    for (const asset of imageAssets) {
+      await wordImageParagraph(asset.copiedPath, asset.name, options.imageWidth || 380);
+    }
+    if (fileAssets.length) wordAssetList(fileAssets);
+  };
+
+  children.push(createWordParagraph(dossier.title, context, {
+    heading: HeadingLevel.TITLE,
+    alignment: AlignmentType.CENTER,
+    bold: true,
+    size: 34,
+    spacing: { after: 120 },
+  }));
+  children.push(createWordParagraph(dossier.subtitle, context, {
+    alignment: AlignmentType.CENTER,
+    size: 24,
+    spacing: { after: 120 },
+  }));
+  children.push(createWordParagraph(`${lbl('Implementing Body', 'الجهة المنفذة')}: ${context.brand.implementingBody}`, context, {
+    alignment: paragraphAlign,
+  }));
+  children.push(createWordParagraph(`${lbl('Preparation Date', 'تاريخ الإعداد')}: ${context.brand.preparationDate}`, context, {
+    alignment: paragraphAlign,
+  }));
+  children.push(createWordParagraph(`${lbl('Consultant Team', 'الفريق الاستشاري')}: ${context.brand.consultantTeam}`, context, {
+    alignment: paragraphAlign,
+    spacing: { after: 240 },
+  }));
+  children.push(wordHeading(lbl('Executive Summary', 'الملخص التنفيذي'), HeadingLevel.HEADING_1));
+  wordBody(dossier.executiveSummary);
+
+  if (hasRenderableText(dossier.methodology)) {
+    children.push(wordHeading(lbl('Methodology', 'المنهجية'), HeadingLevel.HEADING_1));
+    wordBody(dossier.methodology);
+  }
+
+  if (coverageLines.length) {
+    children.push(wordHeading(lbl('Coverage Summary', 'ملخص التغطية'), HeadingLevel.HEADING_1));
+    coverageLines.forEach(line => {
+      children.push(createWordParagraph(`- ${line}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 20, after: 50 },
+      }));
+    });
+  }
+
+  if (sections.length) {
+    children.push(wordHeading(lbl('Table of Contents', 'جدول المحتويات'), HeadingLevel.HEADING_1));
+    sections.forEach((section, index) => {
+      children.push(createWordParagraph(`${index + 1}. ${section.title}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 40, after: 40 },
+      }));
+    });
+
+    sections.forEach(section => {
+      children.push(wordHeading(section.title, HeadingLevel.HEADING_1, {
+        spacing: { before: 180, after: 80 },
+      }));
+      wordBody(section.body);
+    });
+  }
+
+  if (projectWideServiceChapters.length) {
+    children.push(wordHeading(lbl('Project-Wide Linked Material', 'المواد المرتبطة على مستوى المشروع'), HeadingLevel.HEADING_1, {
+      spacing: { before: 180, after: 80 },
+    }));
+    wordBody(lbl(
+      'Project-level assets that are not attached to a single building are included here so the main dossier carries the full study record alongside the building chapters.',
+      'تدرج هنا الأصول المرتبطة بالمشروع ككل وغير المرتبطة بمبنى واحد حتى تحمل الوثيقة الرئيسية سجل الدراسة الكامل إلى جانب فصول المباني.',
+    ));
+    for (const chapter of projectWideServiceChapters) {
+      await pushAssetChapter(chapter.title, chapter.intro, chapter.imageAssets, chapter.fileAssets);
+    }
+  }
+
+  if (buildingRecords.length) {
+    children.push(wordHeading(lbl('Building Documentation', 'توثيق المباني'), HeadingLevel.HEADING_1, {
+      spacing: { before: 180, after: 80 },
+    }));
+    for (let index = 0; index < buildingRecords.length; index += 1) {
+      const building = buildingRecords[index];
+      const assetGroups = collectDossierAssetGroups(building.assets || []);
+      children.push(wordHeading(`${index + 1}. ${building.name}`, HeadingLevel.HEADING_2, {
+        spacing: { before: 180, after: 70 },
+      }));
+      wordBody(building.summary);
+      if (assetGroups.heroImage) {
+        await wordImageParagraph(assetGroups.heroImage.copiedPath, assetGroups.heroImage.name, 430);
+      }
+      const buildingServiceChapters = getOrderedServiceDossierChapters(assetGroups, lang, {
+        scope: 'building',
+        historicalNarrative,
+      });
+      for (const chapter of buildingServiceChapters) {
+        await pushAssetChapter(chapter.title, chapter.intro, chapter.imageAssets, chapter.fileAssets);
+      }
+    }
+  }
+
+  if (references.length) {
+    children.push(wordHeading(lbl('References', 'المراجع'), HeadingLevel.HEADING_1, {
+      spacing: { before: 180, after: 80 },
+    }));
+    references.forEach(ref => {
+      children.push(createWordParagraph(`${ref.title} - ${ref.note}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 20, after: 60 },
+      }));
+    });
+  }
+
+  if (appendices.length) {
+    children.push(wordHeading(lbl('Appendices', 'الملاحق'), HeadingLevel.HEADING_1, {
+      spacing: { before: 180, after: 80 },
+    }));
+    appendices.forEach(item => {
+      children.push(createWordParagraph(`- ${item}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 20, after: 40 },
+      }));
+    });
+  }
+
+  const dossierDoc = new Document({
+    creator: 'Codex',
+    title: dossier.title,
+    sections: [{ properties: {}, children }],
+  });
+  const dossierBuffer = await Packer.toBuffer(dossierDoc);
+  fs.writeFileSync(outPath, dossierBuffer);
+  return;
+
   children.push(createWordParagraph(dossier.title, context, {
     heading: HeadingLevel.TITLE,
     alignment: AlignmentType.CENTER,
@@ -2572,7 +3071,7 @@ async function buildWordDossier(dossier, context, outPath) {
     spacing: { after: 120 },
   }));
   children.push(createWordParagraph(
-    `${labelForLanguage('Implementing Body', 'الجهة المنفذة', context.brand.languageMode)}: ${context.brand.implementingBody}`,
+    `${labelForLanguage('Implementing Body', 'الجف‡ة المنفذة', context.brand.languageMode)}: ${context.brand.implementingBody}`,
     context,
     { alignment: paragraphAlign },
   ));
@@ -2582,7 +3081,7 @@ async function buildWordDossier(dossier, context, outPath) {
     { alignment: paragraphAlign },
   ));
   children.push(createWordParagraph(
-    `${labelForLanguage('Consultant Team', 'الفريق الاستشاري', context.brand.languageMode)}: ${context.brand.consultantTeam}`,
+    `${labelForLanguage('Consultant Team', 'الفريف‚ الاستشاري', context.brand.languageMode)}: ${context.brand.consultantTeam}`,
     context,
     { alignment: paragraphAlign, spacing: { after: 240 } },
   ));
@@ -2592,74 +3091,84 @@ async function buildWordDossier(dossier, context, outPath) {
     bold: true,
   }));
   children.push(...createWordNarrativeParagraphs(dossier.executiveSummary, context, { alignment: paragraphAlign }));
-  children.push(createWordParagraph(labelForLanguage('Methodology', 'المنهجية', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
-    bold: true,
-  }));
-  children.push(...createWordNarrativeParagraphs(dossier.methodology, context, { alignment: paragraphAlign }));
-  children.push(createWordParagraph(labelForLanguage('Table of Contents', 'جدول المحتويات', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
-    bold: true,
-  }));
-  dossier.sections.forEach((section, index) => {
-    children.push(createWordParagraph(`${index + 1}. ${section.title}`, context, {
+  if (hasRenderableText(dossier.methodology)) {
+    children.push(createWordParagraph(labelForLanguage('Methodology', 'المنف‡جية', context.brand.languageMode), context, {
+      heading: HeadingLevel.HEADING_1,
       alignment: paragraphAlign,
-      spacing: { line: 320, before: 40, after: 40 },
+      bold: true,
     }));
-  });
+    children.push(...createWordNarrativeParagraphs(dossier.methodology, context, { alignment: paragraphAlign }));
+  }
+  if (sections.length) {
+    children.push(createWordParagraph(labelForLanguage('Table of Contents', 'جدول المحتويات', context.brand.languageMode), context, {
+      heading: HeadingLevel.HEADING_1,
+      alignment: paragraphAlign,
+      bold: true,
+    }));
+    sections.forEach((section, index) => {
+      children.push(createWordParagraph(`${index + 1}. ${section.title}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 40, after: 40 },
+      }));
+    });
 
-  dossier.sections.forEach(section => {
-    children.push(createWordParagraph(section.title, context, {
+    sections.forEach(section => {
+      children.push(createWordParagraph(section.title, context, {
+        heading: HeadingLevel.HEADING_1,
+        alignment: paragraphAlign,
+        bold: true,
+        spacing: { before: 180, after: 80 },
+      }));
+      children.push(...createWordNarrativeParagraphs(section.body, context, { alignment: paragraphAlign }));
+    });
+  }
+
+  if (buildingRecords.length) {
+    children.push(createWordParagraph(labelForLanguage('Building Documentation', 'توثيف‚ المباني', context.brand.languageMode), context, {
       heading: HeadingLevel.HEADING_1,
       alignment: paragraphAlign,
       bold: true,
       spacing: { before: 180, after: 80 },
     }));
-    children.push(...createWordNarrativeParagraphs(section.body, context, { alignment: paragraphAlign }));
-  });
+    buildingRecords.forEach((building, index) => {
+      children.push(createWordParagraph(`${index + 1}. ${building.name}`, context, {
+        heading: HeadingLevel.HEADING_2,
+        alignment: paragraphAlign,
+        bold: true,
+      }));
+      children.push(...createWordNarrativeParagraphs(building.summary, context, { alignment: paragraphAlign }));
+    });
+  }
 
-  children.push(createWordParagraph(labelForLanguage('Building Documentation', 'توثيق المباني', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
-    bold: true,
-    spacing: { before: 180, after: 80 },
-  }));
-  dossier.buildingRecords.forEach((building, index) => {
-    children.push(createWordParagraph(`${index + 1}. ${building.name}`, context, {
-      heading: HeadingLevel.HEADING_2,
+  if (references.length) {
+    children.push(createWordParagraph(labelForLanguage('References', 'المراجع', context.brand.languageMode), context, {
+      heading: HeadingLevel.HEADING_1,
       alignment: paragraphAlign,
       bold: true,
+      spacing: { before: 180, after: 80 },
     }));
-    children.push(...createWordNarrativeParagraphs(building.summary, context, { alignment: paragraphAlign }));
-  });
+    references.forEach(ref => {
+      children.push(createWordParagraph(`${ref.title} - ${ref.note}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 20, after: 60 },
+      }));
+    });
+  }
 
-  children.push(createWordParagraph(labelForLanguage('References', 'المراجع', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
-    bold: true,
-    spacing: { before: 180, after: 80 },
-  }));
-  dossier.references.forEach(ref => {
-    children.push(createWordParagraph(`${ref.title} - ${ref.note}`, context, {
+  if (appendices.length) {
+    children.push(createWordParagraph(labelForLanguage('Appendices', 'الملاحف‚', context.brand.languageMode), context, {
+      heading: HeadingLevel.HEADING_1,
       alignment: paragraphAlign,
-      spacing: { line: 320, before: 20, after: 60 },
+      bold: true,
+      spacing: { before: 180, after: 80 },
     }));
-  });
-
-  children.push(createWordParagraph(labelForLanguage('Appendices', 'الملاحق', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
-    bold: true,
-    spacing: { before: 180, after: 80 },
-  }));
-  dossier.appendices.forEach(item => {
-    children.push(createWordParagraph(`- ${item}`, context, {
-      alignment: paragraphAlign,
-      spacing: { line: 320, before: 20, after: 40 },
-    }));
-  });
+    appendices.forEach(item => {
+      children.push(createWordParagraph(`- ${item}`, context, {
+        alignment: paragraphAlign,
+        spacing: { line: 320, before: 20, after: 40 },
+      }));
+    });
+  }
 
   const doc = new Document({
     creator: 'Codex',
@@ -2721,14 +3230,19 @@ async function buildPdfDossier(dossier, context, images, outPath) {
     const stream = fs.createWriteStream(outPath);
     doc.pipe(stream);
     const pageBottom = () => doc.page.height - doc.page.margins.bottom - 20;
-    const usedPages = new Set([0]);
+    const usedPages = new Set();
     const markPageUsed = pageIndex => usedPages.add(pageIndex);
     const ensureSpace = minHeight => {
       if (doc.y + minHeight > pageBottom()) doc.addPage();
     };
-    const sections = (dossier.sections || []).filter(section => normalizeText(section?.title) || normalizeText(section?.body));
-    const buildingRecords = (dossier.buildingRecords || []).filter(building => normalizeText(building?.name) || normalizeText(building?.summary));
-    const references = (dossier.references || []).filter(ref => normalizeText(ref?.title) || normalizeText(ref?.note));
+    const startSection = (minHeight = 72, spacingBefore = 0.9) => {
+      const spacingHeight = spacingBefore > 0 ? spacingBefore * 14 : 0;
+      ensureSpace(minHeight + spacingHeight);
+      if (spacingBefore > 0) doc.moveDown(spacingBefore);
+    };
+    const sections = (dossier.sections || []).filter(hasRenderableSection);
+    const buildingRecords = (dossier.buildingRecords || []).filter(hasRenderableBuildingRecord);
+    const references = (dossier.references || []).filter(hasRenderableReference);
     const appendices = (dossier.appendices || []).map(item => normalizeText(item)).filter(Boolean);
 
     (async () => {
@@ -2751,6 +3265,281 @@ async function buildPdfDossier(dossier, context, images, outPath) {
           // Ignore broken logos and continue.
         }
       }
+
+      const lang = context.brand.languageMode;
+      const lbl = (en, ar) => labelForLanguage(en, ar, lang);
+      const coverageLines = buildCoverageSummaryLines(dossier.coverage || {}, lang);
+      const projectWideAssets = collectProjectWideAssetGroups(context);
+      const historicalNarrative = getHistoricalNarrative(context);
+      const projectWideServiceChapters = getOrderedServiceDossierChapters(projectWideAssets, lang, {
+        scope: 'project',
+        historicalNarrative,
+      });
+
+      const embedPdfImage = async (imgPath, opts = {}) => {
+        const renderPath = await resolveRenderableImagePath(imgPath, path.dirname(outPath), {
+          forcePng: true,
+          suffix: 'pdf_asset',
+        });
+        if (!renderPath || !fs.existsSync(renderPath)) return;
+        try {
+          const maxH = opts.maxH || 200;
+          const maxW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+          ensureSpace(maxH + 30);
+          capturePdfPages(doc, () => doc.image(renderPath, {
+            fit: [maxW, maxH],
+            align: 'center',
+          }), markPageUsed);
+          doc.moveDown(0.35);
+          if (opts.caption) {
+            capturePdfPages(doc, () => {
+              setPdfFont(doc, false, context.brand.typography)
+                .fontSize(8.5)
+                .fillColor('#64748b')
+                .text(formatPdfText(opts.caption, lang), { align: 'center' });
+            }, markPageUsed);
+            doc.moveDown(0.25);
+          }
+        } catch (error) {
+          // Ignore broken images and continue.
+        }
+      };
+
+      const writePdfAssetLine = asset => {
+        ensureSpace(20);
+        const lineText = asset?.copiedPath || asset?.relativePath || asset?.type
+          ? `- ${formatAssetReference(asset, lang)}`
+          : `- ${normalizeText(asset?.name)}`;
+        capturePdfPages(doc, () => {
+          setPdfFont(doc, false, context.brand.typography).fontSize(9.5).fillColor('#334155').text(
+            formatPdfText(lineText, lang),
+            {
+              align: prefersRtlText(normalizeText(asset?.name, lineText), lang, { preferDocumentDirection: true }) ? 'right' : 'left',
+            },
+          );
+        }, markPageUsed);
+      };
+
+      const pushPdfAssetChapter = async (title, intro, imageAssets = [], fileAssets = [], options = {}) => {
+        if (!hasRenderableText(intro) && !imageAssets.length && !fileAssets.length) return;
+        startSection(options.minHeight || 64, options.spacingBefore ?? 0.75);
+        writePdfSectionHeading(doc, title, context, {
+          fontSize: options.fontSize || 12.5,
+          color: options.color || '#0f172a',
+          onPageUsed: markPageUsed,
+        });
+        if (hasRenderableText(intro)) {
+          writePdfParagraphs(doc, intro, context, {
+            ltrAlign: 'justify',
+            paragraphGap: 0.35,
+            onPageUsed: markPageUsed,
+          });
+        }
+        for (const asset of imageAssets) {
+          await embedPdfImage(asset.copiedPath, {
+            maxH: options.imageMaxH || 210,
+            caption: asset.name,
+          });
+        }
+        fileAssets.forEach(writePdfAssetLine);
+      };
+
+      capturePdfPages(doc, () => {
+        setPdfFont(doc, true, context.brand.typography)
+          .fontSize(25)
+          .fillColor(context.brand.primaryColor)
+          .text(formatPdfText(dossier.title, lang), { align: 'center' });
+      }, markPageUsed);
+      doc.moveDown(0.35);
+      capturePdfPages(doc, () => {
+        setPdfFont(doc, false, context.brand.typography)
+          .fontSize(15)
+          .fillColor('#334155')
+          .text(formatPdfText(dossier.subtitle, lang), { align: 'center' });
+      }, markPageUsed);
+      doc.moveDown(0.2);
+      capturePdfPages(doc, () => {
+        setPdfFont(doc, false, context.brand.typography)
+          .fontSize(10)
+          .fillColor('#475569')
+          .text(formatPdfText(`${context.brand.implementingBody} | ${context.brand.preparationDate}`, lang), { align: 'center' });
+      }, markPageUsed);
+      doc.moveDown(0.3);
+      capturePdfPages(doc, () => {
+        setPdfFont(doc, false, context.brand.typography)
+          .fontSize(10)
+          .fillColor('#64748b')
+          .text(formatPdfText(`${lbl('Consultant Team', 'الفريق الاستشاري')}: ${context.brand.consultantTeam}`, lang), { align: 'center' });
+      }, markPageUsed);
+
+      if (images[0]?.path && fs.existsSync(images[0].path)) {
+        doc.moveDown(0.8);
+        await embedPdfImage(images[0].path, { maxH: 215, caption: images[0].caption || '' });
+      }
+
+      startSection(88, 1);
+      writePdfSectionHeading(doc, lbl('Executive Summary', 'الملخص التنفيذي'), context, {
+        color: '#0f172a',
+        onPageUsed: markPageUsed,
+      });
+      writePdfParagraphs(doc, dossier.executiveSummary, context, {
+        ltrAlign: 'justify',
+        onPageUsed: markPageUsed,
+      });
+
+      if (hasRenderableText(dossier.methodology)) {
+        startSection(88, 0.7);
+        writePdfSectionHeading(doc, lbl('Methodology', 'المنهجية'), context, {
+          color: '#0f172a',
+          onPageUsed: markPageUsed,
+        });
+        writePdfParagraphs(doc, dossier.methodology, context, {
+          ltrAlign: 'justify',
+          onPageUsed: markPageUsed,
+        });
+      }
+
+      if (coverageLines.length) {
+        startSection(80, 0.7);
+        writePdfSectionHeading(doc, lbl('Coverage Summary', 'ملخص التغطية'), context, {
+          color: '#0f172a',
+          onPageUsed: markPageUsed,
+        });
+        coverageLines.forEach(line => writePdfAssetLine({ name: line }));
+      }
+
+      if (sections.length) {
+        startSection(80, 0.7);
+        writePdfSectionHeading(doc, lbl('Table of Contents', 'جدول المحتويات'), context, {
+          color: '#0f172a',
+          fontSize: 13,
+          onPageUsed: markPageUsed,
+        });
+        sections.forEach((section, index) => {
+          ensureSpace(20);
+          capturePdfPages(doc, () => {
+            setPdfFont(doc, false, context.brand.typography).fontSize(10).fillColor('#334155').text(
+              formatPdfText(`${index + 1}. ${section.title}`, lang),
+              {
+                align: prefersRtlText(section.title, lang, { preferDocumentDirection: true }) ? 'right' : 'left',
+                indent: 10,
+              },
+            );
+          }, markPageUsed);
+        });
+
+        for (const section of sections) {
+          startSection(72, 0.9);
+          writePdfSectionHeading(doc, section.title, context, { onPageUsed: markPageUsed });
+          writePdfParagraphs(doc, section.body, context, {
+            ltrAlign: 'justify',
+            onPageUsed: markPageUsed,
+          });
+        }
+      }
+
+      if (projectWideServiceChapters.length) {
+        startSection(84, 0.9);
+        writePdfSectionHeading(doc, lbl('Project-Wide Linked Material', 'المواد المرتبطة على مستوى المشروع'), context, {
+          onPageUsed: markPageUsed,
+        });
+        writePdfParagraphs(doc, lbl(
+          'Project-level assets that are not attached to a single building are included here so the main dossier carries the full study record alongside the building chapters.',
+          'تدرج هنا الأصول المرتبطة بالمشروع ككل وغير المرتبطة بمبنى واحد حتى تحمل الوثيقة الرئيسية سجل الدراسة الكامل إلى جانب فصول المباني.',
+        ), context, {
+          ltrAlign: 'justify',
+          onPageUsed: markPageUsed,
+        });
+        for (const chapter of projectWideServiceChapters) {
+          await pushPdfAssetChapter(chapter.title, chapter.intro, chapter.imageAssets, chapter.fileAssets);
+        }
+      }
+
+      if (buildingRecords.length) {
+        startSection(84, 0.9);
+        writePdfSectionHeading(doc, lbl('Building Documentation', 'توثيق المباني'), context, {
+          onPageUsed: markPageUsed,
+        });
+        for (let index = 0; index < buildingRecords.length; index += 1) {
+          const building = buildingRecords[index];
+          const assetGroups = collectDossierAssetGroups(building.assets || []);
+          startSection(64, 0.75);
+          capturePdfPages(doc, () => {
+            setPdfFont(doc, true, context.brand.typography).fontSize(11.5).fillColor('#0f172a').text(
+              formatPdfText(`${index + 1}. ${building.name}`, lang),
+              {
+                align: prefersRtlText(building.name, lang, { preferDocumentDirection: true }) ? 'right' : 'left',
+              },
+            );
+          }, markPageUsed);
+          doc.moveDown(0.15);
+          writePdfParagraphs(doc, building.summary, context, {
+            ltrAlign: 'justify',
+            paragraphGap: 0.35,
+            onPageUsed: markPageUsed,
+          });
+          if (assetGroups.heroImage) {
+            doc.moveDown(0.3);
+            await embedPdfImage(assetGroups.heroImage.copiedPath, { maxH: 210, caption: assetGroups.heroImage.name });
+          }
+          const buildingServiceChapters = getOrderedServiceDossierChapters(assetGroups, lang, {
+            scope: 'building',
+            historicalNarrative,
+          });
+          for (const chapter of buildingServiceChapters) {
+            await pushPdfAssetChapter(
+              chapter.title,
+              chapter.intro,
+              chapter.imageAssets,
+              chapter.fileAssets,
+              { fontSize: 11.5, spacingBefore: 0.45 },
+            );
+          }
+        }
+      }
+
+      if (references.length) {
+        startSection(64, 0.7);
+        writePdfSectionHeading(doc, lbl('References', 'المراجع'), context, {
+          onPageUsed: markPageUsed,
+        });
+        references.forEach(ref => {
+          ensureSpace(26);
+          capturePdfPages(doc, () => {
+            setPdfFont(doc, false, context.brand.typography).fontSize(9.5).fillColor('#334155').text(
+              formatPdfText(`${ref.title} - ${ref.note}`, lang),
+              {
+                align: prefersRtlText(`${ref.title} ${ref.note}`, lang, { preferDocumentDirection: true }) ? 'right' : 'left',
+              },
+            );
+          }, markPageUsed);
+          doc.moveDown(0.15);
+        });
+      }
+
+      if (appendices.length) {
+        startSection(64, 0.6);
+        writePdfSectionHeading(doc, lbl('Appendices', 'الملاحق'), context, {
+          onPageUsed: markPageUsed,
+        });
+        appendices.forEach(item => writePdfAssetLine({ name: item }));
+      }
+
+      const finalPageCount = trimBufferedPages(doc, usedPages);
+      for (let pageIndex = 0; pageIndex < finalPageCount; pageIndex += 1) {
+        doc.switchToPage(pageIndex);
+        capturePdfPages(doc, () => {
+          setPdfFont(doc, false, context.brand.typography).fontSize(8.5).fillColor('#64748b').text(
+            formatPdfText(lbl(`Page ${pageIndex + 1} of ${finalPageCount}`, `الصفحة ${pageIndex + 1} من ${finalPageCount}`), lang),
+            42,
+            doc.page.height - 26,
+            { align: 'center', width: doc.page.width - 84 },
+          );
+        }, markPageUsed);
+      }
+
+      doc.end();
+      return;
 
       capturePdfPages(doc, () => {
         setPdfFont(doc, true, context.brand.typography).fontSize(25).fillColor(context.brand.primaryColor).text(formatPdfText(dossier.title, context.brand.languageMode), { align: 'center' });
@@ -2796,7 +3585,7 @@ async function buildPdfDossier(dossier, context, images, outPath) {
       });
 
       if (normalizeText(dossier.methodology)) {
-        ensureSpace(120);
+        ensureSpace(128);
         doc.moveDown(0.6);
         writePdfSectionHeading(doc, labelForLanguage('Methodology', '\u0627\u0644\u0645\u0646\u0647\u062c\u064a\u0629', context.brand.languageMode), context, {
           color: '#0f172a',
@@ -2830,8 +3619,7 @@ async function buildPdfDossier(dossier, context, images, outPath) {
       });
 
       sections.forEach(section => {
-        ensureSpace(72);
-        doc.moveDown(0.9);
+        startSection(72, 0.9);
         writePdfSectionHeading(doc, section.title, context, { onPageUsed: markPageUsed });
         writePdfParagraphs(doc, section.body, context, {
           ltrAlign: 'justify',
@@ -2840,8 +3628,7 @@ async function buildPdfDossier(dossier, context, images, outPath) {
       });
 
       if (buildingRecords.length) {
-        ensureSpace(72);
-        doc.moveDown(0.9);
+        startSection(72, 0.9);
         writePdfSectionHeading(doc, labelForLanguage('Building Documentation', '\u062a\u0648\u062b\u064a\u0642 \u0627\u0644\u0645\u0628\u0627\u0646\u064a', context.brand.languageMode), context, {
           onPageUsed: markPageUsed,
         });
@@ -2885,8 +3672,7 @@ async function buildPdfDossier(dossier, context, images, outPath) {
       }
 
       if (appendices.length) {
-        ensureSpace(64);
-        doc.moveDown(0.6);
+        startSection(64, 0.6);
         writePdfSectionHeading(doc, labelForLanguage('Appendices', '\u0627\u0644\u0645\u0644\u0627\u062d\u0642', context.brand.languageMode), context, {
           onPageUsed: markPageUsed,
         });
@@ -2950,119 +3736,418 @@ async function buildWordBuildingDocument(building, context, outPath) {
     return;
   }
 
-  const rtlLike = isRtlLanguage(context.brand.languageMode);
+  const lang = context.brand.languageMode;
+  const rtlLike = isRtlLanguage(lang);
   const paragraphAlign = rtlLike ? AlignmentType.RIGHT : AlignmentType.LEFT;
+
   const logo = await prepareLogoPlacement(context.brand.logoPath, path.dirname(outPath), {
     forcePng: true,
     suffix: 'word_logo',
     maxWidth: 150,
     maxHeight: 64,
   });
-  const groupedTypes = building.assets.reduce((acc, asset) => {
-    acc[asset.type] = (acc[asset.type] || 0) + 1;
-    return acc;
-  }, {});
 
-  const children = [];
-  if (logo && ImageRun && fs.existsSync(logo.path)) {
-    children.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 180 },
-      children: [
-        new ImageRun({
-          data: fs.readFileSync(logo.path),
-          transformation: { width: logo.width, height: logo.height },
-        }),
-      ],
-    }));
+  // â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const lbl = (en, ar) => labelForLanguage(en, ar, lang);
+
+  function wordHeading(text, level, opts = {}) {
+    return createWordParagraph(text, context, {
+      heading: level,
+      alignment: paragraphAlign,
+      bold: true,
+      spacing: { before: 240, after: 100 },
+      ...opts,
+    });
   }
 
-  children.push(
-    createWordParagraph(building.name, context, {
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 30,
-    }),
-  );
-  children.push(...createWordNarrativeParagraphs(building.summary, context, { alignment: paragraphAlign }));
-  children.push(createWordParagraph(labelForLanguage('Available Evidence', 'الأدلة المتاحة', context.brand.languageMode), context, {
-      heading: HeadingLevel.HEADING_1,
-      alignment: paragraphAlign,
-      bold: true,
-    }));
+  function wordBody(text, opts = {}) {
+    return createWordNarrativeParagraphs(text, context, { alignment: paragraphAlign, ...opts });
+  }
 
-  Object.entries(groupedTypes).forEach(([type, count]) => {
-    children.push(createWordParagraph(`${localizedAssetType(type, context.brand.languageMode)}: ${count}`, context, {
-      alignment: paragraphAlign,
-    }));
-  });
+  function wordImageRun(assetPath, width = 380) {
+    if (!ImageRun || !fs.existsSync(assetPath)) return null;
+    try {
+      const data = fs.readFileSync(assetPath);
+      const ext = fileExt(assetPath).replace('.', '');
+      const typeMap = { jpg: 'jpg', jpeg: 'jpg', png: 'png', webp: 'png' };
+      return new ImageRun({ data, type: typeMap[ext] || 'png', transformation: { width, height: Math.round(width * 0.6) } });
+    } catch { return null; }
+  }
 
-  children.push(createWordParagraph(labelForLanguage('Implementation Notes', 'ملاحظات التنفيذ', context.brand.languageMode), context, {
-    heading: HeadingLevel.HEADING_1,
-    alignment: paragraphAlign,
+  function wordImageParagraph(assetPath, caption, width = 380) {
+    const run = wordImageRun(assetPath, width);
+    if (!run) return [];
+    const items = [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 80, after: 40 },
+        children: [run],
+      }),
+    ];
+    if (caption) {
+      items.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 100 },
+        children: [new TextRun({ text: caption, size: 18, color: '475569', italics: true })],
+      }));
+    }
+    return items;
+  }
+
+  // â”€â”€ pick images from building assets by service â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const webImages = building.assets.filter(a => a.copiedPath && isWebReadyImage(fileExt(a.copiedPath)));
+  const imgByService = (svc) => webImages.filter(a => a.service === svc);
+  const beforeAfterImgs = imgByService(1).slice(0, 6);
+  const archDrawings = building.assets.filter(a => a.copiedPath && a.service === 2 && (a.type === 'drawing' || a.usage === 'technical-drawing')).slice(0, 6);
+  const archDrawingImages = building.assets.filter(a => a.copiedPath && a.service === 2 && isWebReadyImage(fileExt(a.copiedPath))).slice(0, 6);
+  const viz2d3d = [...imgByService(2), ...imgByService(5)].slice(0, 8);
+  const historicalImgs = imgByService(4).slice(0, 4);
+
+  // â”€â”€ build children array â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const children = [];
+
+  // Logo
+  if (logo && ImageRun && fs.existsSync(logo.path)) {
+    try {
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+        children: [new ImageRun({ data: fs.readFileSync(logo.path), transformation: { width: logo.width, height: logo.height } })],
+      }));
+    } catch { /* skip broken logo */ }
+  }
+
+  // â”€â”€ 1. COVER / TITLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  children.push(createWordParagraph(building.name, context, {
+    heading: HeadingLevel.TITLE,
+    alignment: AlignmentType.CENTER,
     bold: true,
+    size: 34,
+    spacing: { after: 120 },
   }));
-  children.push(...createWordNarrativeParagraphs(localizeTemplateText(
-    `This building record was prepared as part of ${context.brand.projectName}. It summarizes only the evidence actually linked for this building and should be expanded further only when additional verified material becomes available.`,
-    `أُعد هذا السجل الخاص بالمبنى ضمن ${context.brand.projectName}. وهو يلخص فقط الأدلة المرتبطة فعليا بهذا المبنى، ولا ينبغي توسيعه إلا عند توفر مواد إضافية موثقة.`,
-    context.brand.languageMode,
-  ), context, { alignment: paragraphAlign }));
+  children.push(createWordParagraph(context.brand.projectName, context, {
+    alignment: AlignmentType.CENTER,
+    size: 22,
+    color: '1A3554',
+    spacing: { after: 60 },
+  }));
+  children.push(createWordParagraph(
+    `${lbl('Prepared by', 'أعدف‡')} ${context.brand.implementingBody}  |  ${context.brand.preparationDate}`,
+    context, { alignment: AlignmentType.CENTER, size: 18, color: '475569', spacing: { after: 240 } },
+  ));
 
+  // Hero image (first available from any service)
+  const heroImg = webImages[0];
+  if (heroImg) children.push(...wordImageParagraph(heroImg.copiedPath, '', 480));
+
+  // â”€â”€ 2. ARCHITECTURAL DESCRIPTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  children.push(wordHeading(lbl('Architectural Description', 'الوصف المعماري الفƒامل'), HeadingLevel.HEADING_1));
+  children.push(...wordBody(building.summary));
+
+  // â”€â”€ 3. BEFORE / AFTER (Service 01) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (beforeAfterImgs.length) {
+    children.push(wordHeading(lbl('Before / After Photos', 'صور ف‚بل / بعد'), HeadingLevel.HEADING_1));
+    children.push(...wordBody(lbl(
+      'Restored imagery produced through the visual intelligence phase, showing condition before and after restoration work.',
+      'صور معالفŽجة تُنتجف‡ا مرحلة الذفƒاء البصريي تُظف‡ر حالة المبنف‰ ف‚بل وبعد أعمال الترميم.',
+    )));
+    for (const img of beforeAfterImgs) {
+      children.push(...wordImageParagraph(img.copiedPath, img.name, 380));
+    }
+  }
+
+  // â”€â”€ 4. ARCHITECTURAL DRAWINGS (Service 02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const drawingSources = [...archDrawings, ...archDrawingImages];
+  if (drawingSources.length) {
+    children.push(wordHeading(lbl('Architectural Drawings', 'المخططات المعمارية (مساف‚طي واجف‡اتي مف‚اطع)'), HeadingLevel.HEADING_1));
+    children.push(...wordBody(lbl(
+      'Plans, facades, and sections produced through the architectural rehabilitation visualization phase.',
+      'المساف‚ط والواجف‡ات والمف‚اطع المُنتجة عبر مرحلة تصور إعادة التأف‡يل المعماري.',
+    )));
+    for (const item of drawingSources.slice(0, 6)) {
+      if (item.copiedPath && isWebReadyImage(fileExt(item.copiedPath))) {
+        children.push(...wordImageParagraph(item.copiedPath, item.name, 420));
+      } else {
+        children.push(createWordParagraph(`- ${item.name}`, context, { alignment: paragraphAlign }));
+      }
+    }
+  }
+
+  // â”€â”€ 5. 2D / 3D VISUALIZATIONS (Service 02 + 05) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (viz2d3d.length) {
+    children.push(wordHeading(lbl('2D & 3D Visualizations', 'التصورات ثنائية وثلاثية الأبعاد'), HeadingLevel.HEADING_1));
+    children.push(...wordBody(lbl(
+      'Rendered visualizations and three-dimensional outputs produced for this building across the project phases.',
+      'التصورات المُصيفŽف‘رة والمخرجات ثلاثية الأبعاد المُنتجة لف‡ذا المبنف‰ عبر مراحل المشروع.',
+    )));
+    for (const img of viz2d3d) {
+      children.push(...wordImageParagraph(img.copiedPath, img.name, 380));
+    }
+  }
+
+  // â”€â”€ 6. HISTORICAL ANALYSIS (Service 04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const s4JobForBuilding = context.linkedJobs?.find(j => j.service === 4) || null;
+  const historicalNarrative = s4JobForBuilding?.metadata?.project?.description
+    || s4JobForBuilding?.metadata?.summary
+    || lbl(
+      'Historical analysis was prepared as part of the academic reporting phase. Refer to the linked reports for full narrative detail.',
+      'أُعد التحليل التاريخي ضمن مرحلة إعداد التف‚ارير الأفƒاديمية. ارجع إلف‰ التف‚ارير المرتبطة للاطلاع علف‰ التفاصيل السردية الفƒاملة.',
+    );
+  children.push(wordHeading(lbl('Historical Analysis', 'التحليل التاريخي'), HeadingLevel.HEADING_1));
+  children.push(...wordBody(historicalNarrative));
+  for (const img of historicalImgs) {
+    children.push(...wordImageParagraph(img.copiedPath, img.name, 380));
+  }
+
+  // â”€â”€ 7. REHABILITATION PLAN (Service 02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const s2Reports = building.assets.filter(a => a.service === 2 && (a.type === 'report' || a.usage === 'documentation')).slice(0, 6);
+  children.push(wordHeading(lbl('Rehabilitation Plan', 'خطة التأف‡يل'), HeadingLevel.HEADING_1));
+  children.push(...wordBody(lbl(
+    'The rehabilitation strategy for this building was developed through the architectural phase, incorporating condition assessment, structural analysis, and restoration methodology.',
+    'وُضعت استراتيجية التأف‡يل لف‡ذا المبنف‰ في إطار المرحلة المعماريةي وتشمل تف‚ييم الحالة والتحليل الإنشائي ومنف‡جية الترميم.',
+  )));
+  for (const item of s2Reports) {
+    children.push(createWordParagraph(`- ${item.name}`, context, { alignment: paragraphAlign }));
+  }
+  if (!s2Reports.length) {
+    children.push(...wordBody(lbl(
+      'Detailed rehabilitation plans will be incorporated when additional architectural outputs are linked to this building record.',
+      'ستُدرج خطط التأف‡يل التفصيلية عند ربط مخرجات معمارية إضافية بسجل ف‡ذا المبنف‰.',
+    )));
+  }
+
+  // â”€â”€ BUILD DOC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const doc = new Document({ creator: 'Codex', title: building.name, sections: [{ properties: {}, children }] });
   const buffer = await Packer.toBuffer(doc);
   fs.writeFileSync(outPath, buffer);
 }
 
+
 async function buildPdfBuildingDocument(building, context, imagePath, outPath) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 42 });
+    const doc = new PDFDocument({ size: 'A4', margin: 42, bufferPages: true });
     const stream = fs.createWriteStream(outPath);
     doc.pipe(stream);
-    const rtlLike = isRtlLanguage(context.brand.languageMode);
+    const lang = context.brand.languageMode;
+    const rtlLike = isRtlLanguage(lang);
     const align = rtlLike ? 'right' : 'left';
+    const usedPages = new Set([0]);
+    const markPageUsed = idx => usedPages.add(idx);
+    const pageBottom = () => doc.page.height - doc.page.margins.bottom - 28;
+    const ensureSpace = minH => {
+      if (doc.y + minH > pageBottom()) {
+        doc.addPage();
+        markPageUsed(doc.bufferedPageRange().count - 1);
+      }
+    };
+    const lbl = (en, ar) => labelForLanguage(en, ar, lang);
+
+    // â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    function sectionHeading(text, opts = {}) {
+      ensureSpace(60);
+      writePdfSectionHeading(doc, text, context, { color: '#0f172a', ...opts, onPageUsed: markPageUsed });
+    }
+
+    function sectionBody(text, opts = {}) {
+      writePdfParagraphs(doc, text, context, { align: rtlLike ? 'right' : 'justify', ...opts, onPageUsed: markPageUsed });
+    }
+
+    function embedImage(imgPath, opts = {}) {
+      if (!imgPath || !fs.existsSync(imgPath)) return;
+      try {
+        const maxH = opts.maxH || 200;
+        const maxW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+        ensureSpace(maxH + 20);
+        capturePdfPages(doc, () => doc.image(imgPath, {
+          fit: [maxW, maxH],
+          align: 'center',
+        }), markPageUsed);
+        doc.moveDown(0.4);
+        if (opts.caption) {
+          capturePdfPages(doc, () => setPdfFont(doc, false, context.brand.typography)
+            .fontSize(8).fillColor('#64748b').text(formatPdfText(opts.caption, lang), { align: 'center' }), markPageUsed);
+          doc.moveDown(0.3);
+        }
+      } catch { /* skip broken image */ }
+    }
+
+    // â”€â”€ classify building assets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const webImgs = building.assets.filter(a => a.copiedPath && isWebReadyImage(fileExt(a.copiedPath)));
+    const imgBySvc = svc => webImgs.filter(a => a.service === svc);
+    const beforeAfterImgs = imgBySvc(1).slice(0, 6);
+    const s2Drawings = building.assets.filter(a => a.copiedPath && a.service === 2 && (a.type === 'drawing' || a.usage === 'technical-drawing')).slice(0, 6);
+    const s2DrawingImages = building.assets.filter(a => a.copiedPath && a.service === 2 && isWebReadyImage(fileExt(a.copiedPath))).slice(0, 6);
+    const viz2d3d = [...imgBySvc(2), ...imgBySvc(5)].slice(0, 8);
+    const historicalImgs = imgBySvc(4).slice(0, 4);
+    const s2Reports = building.assets.filter(a => a.service === 2 && (a.type === 'report' || a.usage === 'documentation')).slice(0, 6);
+    const heroImg = webImgs[0];
 
     (async () => {
       const logo = await prepareLogoPlacement(context.brand.logoPath, path.dirname(outPath), {
-        suffix: 'pdf_logo',
-        maxWidth: 150,
-        maxHeight: 64,
+        suffix: 'pdf_logo', maxWidth: 150, maxHeight: 64,
       });
 
+      // â”€â”€ COVER PAGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (logo) {
         try {
           const logoX = (doc.page.width - logo.width) / 2;
-          doc.image(logo.path, logoX, doc.y, { width: logo.width, height: logo.height });
-          doc.y += logo.height + 12;
-        } catch (error) {
-          // Ignore broken logo image.
+          capturePdfPages(doc, () => doc.image(logo.path, logoX, doc.y, { width: logo.width, height: logo.height }), markPageUsed);
+          doc.y = doc.y + logo.height + 14;
+        } catch { /* skip */ }
+      }
+
+      // Cover: full-width hero image
+      if (heroImg) {
+        embedImage(heroImg.copiedPath, { maxH: 240 });
+        doc.moveDown(0.4);
+      } else if (imagePath && fs.existsSync(imagePath)) {
+        embedImage(imagePath, { maxH: 240 });
+        doc.moveDown(0.4);
+      }
+
+      capturePdfPages(doc, () =>
+        setPdfFont(doc, true, context.brand.typography)
+          .fontSize(26).fillColor(context.brand.primaryColor)
+          .text(formatPdfText(building.name, lang), { align: 'center' }),
+        markPageUsed,
+      );
+      doc.moveDown(0.25);
+      capturePdfPages(doc, () =>
+        setPdfFont(doc, false, context.brand.typography)
+          .fontSize(11).fillColor('#334155')
+          .text(formatPdfText(context.brand.projectName, lang), { align: 'center' }),
+        markPageUsed,
+      );
+      doc.moveDown(0.2);
+      capturePdfPages(doc, () =>
+        setPdfFont(doc, false, context.brand.typography)
+          .fontSize(9).fillColor('#64748b')
+          .text(formatPdfText(`${lbl('Prepared by', 'أعدف‡')} ${context.brand.implementingBody}  |  ${context.brand.preparationDate}`, lang), { align: 'center' }),
+        markPageUsed,
+      );
+
+      // â”€â”€ 1. ARCHITECTURAL DESCRIPTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      doc.addPage();
+      markPageUsed(doc.bufferedPageRange().count - 1);
+      sectionHeading(lbl('Architectural Description', 'الوصف المعماري الفƒامل'));
+      doc.moveDown(0.2);
+      sectionBody(building.summary);
+
+      // â”€â”€ 2. BEFORE / AFTER PHOTOS (Service 01) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      if (beforeAfterImgs.length) {
+        doc.moveDown(0.8);
+        sectionHeading(lbl('Before / After Photos', 'صور ف‚بل / بعد'));
+        doc.moveDown(0.2);
+        sectionBody(lbl(
+          'Restored imagery produced through the visual intelligence phase, showing condition before and after restoration work.',
+          'صور معالفŽجة تُنتجف‡ا مرحلة الذفƒاء البصريي تُظف‡ر حالة المبنف‰ ف‚بل وبعد أعمال الترميم.',
+        ));
+        doc.moveDown(0.5);
+        for (const img of beforeAfterImgs) {
+          embedImage(img.copiedPath, { maxH: 210, caption: img.name });
+          doc.moveDown(0.3);
         }
       }
 
-      setPdfFont(doc, true, context.brand.typography).fontSize(22).fillColor(context.brand.primaryColor).text(formatPdfText(building.name, context.brand.languageMode), { align: 'center' });
-      doc.moveDown(0.3);
-      setPdfFont(doc, false, context.brand.typography).fontSize(10).fillColor('#475569').text(formatPdfText(context.brand.projectName, context.brand.languageMode), { align: 'center' });
-
-      if (imagePath && fs.existsSync(imagePath)) {
-        try {
-          doc.moveDown(0.8);
-          doc.image(imagePath, { fit: [510, 220], align: 'center' });
-        } catch (error) {
-          // Ignore broken preview image.
+      // â”€â”€ 3. ARCHITECTURAL DRAWINGS (Service 02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      const allDrawings = [...s2Drawings, ...s2DrawingImages];
+      if (allDrawings.length) {
+        doc.moveDown(0.8);
+        sectionHeading(lbl('Architectural Drawings', 'المخططات المعمارية (مساف‚طي واجف‡اتي مف‚اطع)'));
+        doc.moveDown(0.2);
+        sectionBody(lbl(
+          'Plans, facades, and sections produced through the architectural rehabilitation visualization phase.',
+          'المساف‚ط والواجف‡ات والمف‚اطع المُنتجة عبر مرحلة تصور إعادة التأف‡يل المعماري.',
+        ));
+        doc.moveDown(0.5);
+        for (const item of allDrawings.slice(0, 6)) {
+          if (item.copiedPath && isWebReadyImage(fileExt(item.copiedPath))) {
+            embedImage(item.copiedPath, { maxH: 230, caption: item.name });
+          } else {
+            ensureSpace(16);
+            capturePdfPages(doc, () =>
+              setPdfFont(doc, false, context.brand.typography).fontSize(9.5).fillColor('#334155')
+                .text(formatPdfText(`- ${item.name}`, lang), { align }),
+              markPageUsed,
+            );
+          }
+          doc.moveDown(0.3);
         }
       }
 
-      doc.moveDown(0.9);
-      writePdfSectionHeading(doc, labelForLanguage('Building Overview', 'نظرة عامة على المبنى', context.brand.languageMode), context, { color: '#0f172a' });
-      writePdfParagraphs(doc, building.summary, context, { align: rtlLike ? 'right' : 'justify' });
-      doc.moveDown(0.6);
-      writePdfSectionHeading(doc, labelForLanguage('Available Content', 'المحتوى المتاح', context.brand.languageMode), context, { color: '#0f172a', fontSize: 12.5 });
-      building.assets.slice(0, 20).forEach(asset => {
-        setPdfFont(doc, false, context.brand.typography).fontSize(9.5).fillColor('#334155').text(
-          formatPdfText(`- ${asset.name} (${localizedAssetType(asset.type, context.brand.languageMode)})`, context.brand.languageMode),
-          { align },
+      // â”€â”€ 4. 2D / 3D VISUALIZATIONS (Service 02 + 05) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      if (viz2d3d.length) {
+        doc.moveDown(0.8);
+        sectionHeading(lbl('2D & 3D Visualizations', 'التصورات ثنائية وثلاثية الأبعاد'));
+        doc.moveDown(0.2);
+        sectionBody(lbl(
+          'Rendered visualizations and three-dimensional outputs produced for this building across the project phases.',
+          'التصورات المُصيفŽف‘رة والمخرجات ثلاثية الأبعاد المُنتجة لف‡ذا المبنف‰ عبر مراحل المشروع.',
+        ));
+        doc.moveDown(0.5);
+        for (const img of viz2d3d) {
+          embedImage(img.copiedPath, { maxH: 200, caption: img.name });
+          doc.moveDown(0.3);
+        }
+      }
+
+      // â”€â”€ 5. HISTORICAL ANALYSIS (Service 04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      doc.moveDown(0.8);
+      sectionHeading(lbl('Historical Analysis', 'التحليل التاريخي'));
+      doc.moveDown(0.2);
+      const s4Job = context.linkedJobs?.find(j => j.service === 4) || null;
+      const historicalNarrative = s4Job?.metadata?.project?.description
+        || s4Job?.metadata?.summary
+        || lbl(
+          'Historical analysis was prepared as part of the academic reporting phase. Refer to linked reports for full narrative detail.',
+          'أُعد التحليل التاريخي ضمن مرحلة إعداد التف‚ارير الأفƒاديمية. ارجع إلف‰ التف‚ارير المرتبطة للاطلاع علف‰ التفاصيل السردية الفƒاملة.',
         );
-      });
+      sectionBody(historicalNarrative);
+      doc.moveDown(0.5);
+      for (const img of historicalImgs) {
+        embedImage(img.copiedPath, { maxH: 200, caption: img.name });
+        doc.moveDown(0.3);
+      }
+
+      // â”€â”€ 6. REHABILITATION PLAN (Service 02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      doc.moveDown(0.8);
+      sectionHeading(lbl('Rehabilitation Plan', 'خطة التأف‡يل'));
+      doc.moveDown(0.2);
+      sectionBody(lbl(
+        'The rehabilitation strategy for this building was developed through the architectural phase, incorporating condition assessment, structural analysis, and restoration methodology.',
+        'وُضعت استراتيجية التأف‡يل لف‡ذا المبنف‰ في إطار المرحلة المعماريةي وتشمل تف‚ييم الحالة والتحليل الإنشائي ومنف‡جية الترميم.',
+      ));
+      if (s2Reports.length) {
+        doc.moveDown(0.4);
+        for (const item of s2Reports) {
+          ensureSpace(16);
+          capturePdfPages(doc, () =>
+            setPdfFont(doc, false, context.brand.typography).fontSize(9.5).fillColor('#334155')
+              .text(formatPdfText(`- ${item.name}`, lang), { align }),
+            markPageUsed,
+          );
+        }
+      } else {
+        doc.moveDown(0.3);
+        sectionBody(lbl(
+          'Detailed rehabilitation plans will be incorporated when additional architectural outputs are linked to this building record.',
+          'ستُدرج خطط التأف‡يل التفصيلية عند ربط مخرجات معمارية إضافية بسجل ف‡ذا المبنف‰.',
+        ));
+      }
+
+      // â”€â”€ PAGE NUMBERS + TRIM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      const totalPages = trimTrailingBufferedPages(doc, usedPages);
+      for (let i = 0; i < totalPages; i++) {
+        doc.switchToPage(i);
+        capturePdfPages(doc, () =>
+          setPdfFont(doc, false, context.brand.typography).fontSize(8).fillColor('#94a3b8')
+            .text(
+              formatPdfText(lbl(`${building.name}  -  Page ${i + 1} of ${totalPages}`, `${building.name}  -  الصفحة ${i + 1} من ${totalPages}`), lang),
+              42, doc.page.height - 26, { width: doc.page.width - 84, align: 'center' },
+            ),
+          markPageUsed,
+        );
+      }
 
       doc.end();
     })().catch(reject);
@@ -3072,15 +4157,8 @@ async function buildPdfBuildingDocument(building, context, imagePath, outPath) {
   });
 }
 
-function buildResponsePreview(context, dossier, contentModel, outputFiles) {
-  return {
-    title: context.brand.projectName,
-    dossierTitle: dossier.title,
-    assetCount: contentModel.counts.totalAssets,
-    buildingDocuments: dossier.buildingRecords.length,
-    generatedOutputs: outputFiles.length,
-  };
-}
+
+
 
 function buildResponsePreview(context, dossier, contentModel, outputFiles) {
   return {
@@ -3258,47 +4336,56 @@ function applyWorksheetDirection(worksheet, languageMode) {
   }
 }
 
+function safeSheetName(name) {
+  // Excel worksheet names cannot contain: / \ ? * [ ] and must be <= 31 chars.
+  return String(name || 'Sheet')
+    .replace(/[/\\?*[\]]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 31) || 'Sheet';
+}
+
 async function buildExcelManifest(context, dossier, contentModel, deliverables, outPath) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = SERVICE_06_NAME;
   workbook.created = new Date();
 
   const languageMode = context.brand.languageMode;
-  const summary = workbook.addWorksheet(labelForLanguage('Project Summary', 'ملخص المشروع', languageMode));
+  const summary = workbook.addWorksheet(safeSheetName(labelForLanguage('Project Summary', 'ملخص المشروع', languageMode)));
   summary.columns = [
-    { header: labelForLanguage('Field', 'الحقل', languageMode), width: 28 },
-    { header: labelForLanguage('Value', 'القيمة', languageMode), width: 70 },
+    { header: labelForLanguage('Field', 'الحف‚ل', languageMode), width: 28 },
+    { header: labelForLanguage('Value', 'الف‚يمة', languageMode), width: 70 },
   ];
   [
     [labelForLanguage('Project Name', 'اسم المشروع', languageMode), context.brand.projectName],
-    [labelForLanguage('Implementing Body', 'الجهة المنفذة', languageMode), context.brand.implementingBody],
+    [labelForLanguage('Implementing Body', 'الجف‡ة المنفذة', languageMode), context.brand.implementingBody],
     [labelForLanguage('Preparation Date', 'تاريخ الإعداد', languageMode), context.brand.preparationDate],
-    [labelForLanguage('Consultant Team', 'الفريق الاستشاري', languageMode), context.brand.consultantTeam],
+    [labelForLanguage('Consultant Team', 'الفريف‚ الاستشاري', languageMode), context.brand.consultantTeam],
     [labelForLanguage('Language Mode', 'لغة الإخراج', languageMode), localizedLanguageMode(context.brand.languageMode, languageMode)],
-    [labelForLanguage('Assets Indexed', 'الأصول المفهرسة', languageMode), contentModel.counts.totalAssets],
+    [labelForLanguage('Assets Indexed', 'الأصول المفف‡رسة', languageMode), contentModel.counts.totalAssets],
     [labelForLanguage('Images', 'الصور', languageMode), contentModel.counts.images],
-    [labelForLanguage('Reports', 'التقارير', languageMode), contentModel.counts.reports],
+    [labelForLanguage('Reports', 'التف‚ارير', languageMode), contentModel.counts.reports],
     [labelForLanguage('Models', 'النماذج', languageMode), contentModel.counts.models],
-    [labelForLanguage('Presentations', 'العروض التقديمية', languageMode), contentModel.counts.presentations],
+    [labelForLanguage('Presentations', 'العروض التف‚ديمية', languageMode), contentModel.counts.presentations],
   ].forEach(row => summary.addRow(row));
   applyWorksheetDirection(summary, languageMode);
 
-  const assets = workbook.addWorksheet(labelForLanguage('Asset Register', 'سجل الأصول', languageMode));
+  const assets = workbook.addWorksheet(safeSheetName(labelForLanguage('Asset Register', 'سجل الأصول', languageMode)));
   assets.columns = [
     { header: labelForLanguage('Source', 'المصدر', languageMode), width: 28 },
-    { header: labelForLanguage('Building', 'المبنى', languageMode), width: 28 },
+    { header: labelForLanguage('Building', 'المبنف‰', languageMode), width: 28 },
     { header: labelForLanguage('District', 'النطاق', languageMode), width: 28 },
     { header: labelForLanguage('File', 'الملف', languageMode), width: 42 },
     { header: labelForLanguage('Type', 'النوع', languageMode), width: 18 },
     { header: labelForLanguage('Usage', 'الاستخدام', languageMode), width: 24 },
-    { header: labelForLanguage('Size KB', 'الحجم كيلوبايت', languageMode), width: 12 },
+    { header: labelForLanguage('Size KB', 'الحجم فƒيلوبايت', languageMode), width: 12 },
   ];
   contentModel.assets.forEach(asset => {
     assets.addRow([asset.sourceLabel, asset.building, asset.district, asset.name, localizedAssetType(asset.type, languageMode), asset.usage, asset.sizeKB]);
   });
   applyWorksheetDirection(assets, languageMode);
 
-  const outputs = workbook.addWorksheet(labelForLanguage('Generated Outputs', 'المخرجات الناتجة', languageMode));
+  const outputs = workbook.addWorksheet(safeSheetName(labelForLanguage('Generated Outputs', 'المخرجات الناتجة', languageMode)));
   outputs.columns = [
     { header: labelForLanguage('Label', 'الاسم', languageMode), width: 34 },
     { header: labelForLanguage('Relative Path', 'المسار النسبي', languageMode), width: 60 },
@@ -3307,9 +4394,9 @@ async function buildExcelManifest(context, dossier, contentModel, deliverables, 
   deliverables.forEach(file => outputs.addRow([file.label, file.relativePath, file.ext]));
   applyWorksheetDirection(outputs, languageMode);
 
-  const buildings = workbook.addWorksheet(labelForLanguage('Buildings', 'المباني', languageMode));
+  const buildings = workbook.addWorksheet(safeSheetName(labelForLanguage('Buildings', 'المباني', languageMode)));
   buildings.columns = [
-    { header: labelForLanguage('Building', 'المبنى', languageMode), width: 34 },
+    { header: labelForLanguage('Building', 'المبنف‰', languageMode), width: 34 },
     { header: labelForLanguage('Summary', 'الملخص', languageMode), width: 90 },
   ];
   dossier.buildingRecords.forEach(building => buildings.addRow([building.name, building.summary]));
@@ -3352,131 +4439,364 @@ function buildInfographicSvg(context, contentModel, dossier) {
   <text x="${baseX}" y="122" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="28" font-family="${xmlEscape(font)}" font-weight="700" fill="#ffffff">${xmlEscape(prepareDirectionalText(context.brand.projectName, languageMode))}</text>
   <text x="${baseX}" y="156" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="16" font-family="${xmlEscape(font)}" fill="#dbeafe">${xmlEscape(prepareDirectionalText(dossier.title, languageMode))}</text>
   <text x="${rtlLike ? 1116 : 84}" y="220" text-anchor="${anchor}" font-size="64" font-family="${xmlEscape(font)}" font-weight="700" fill="${context.brand.accentColor}">${contentModel.counts.totalAssets}</text>
-  <text x="${rtlLike ? 1116 : 84}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Indexed project assets', 'أصول المشروع المفهرسة', languageMode))}</text>
+  <text x="${rtlLike ? 1116 : 84}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Indexed project assets', 'أصول المشروع المفف‡رسة', languageMode))}</text>
   <text x="${rtlLike ? 770 : 430}" y="220" text-anchor="${anchor}" font-size="64" font-family="${xmlEscape(font)}" font-weight="700" fill="#38bdf8">${dossier.buildingRecords.length}</text>
-  <text x="${rtlLike ? 770 : 430}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Building document groups', 'مجموعات وثائق المباني', languageMode))}</text>
+  <text x="${rtlLike ? 770 : 430}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Building document groups', 'مجموعات وثائف‚ المباني', languageMode))}</text>
   <text x="${rtlLike ? 420 : 760}" y="220" text-anchor="${anchor}" font-size="64" font-family="${xmlEscape(font)}" font-weight="700" fill="#10b981">${contentModel.counts.html + contentModel.counts.presentations + contentModel.counts.models}</text>
-  <text x="${rtlLike ? 420 : 760}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Digital and presentation outputs', 'المخرجات الرقمية والعرضية', languageMode))}</text>
+  <text x="${rtlLike ? 420 : 760}" y="250" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#e2e8f0">${xmlEscape(labelForLanguage('Digital and presentation outputs', 'المخرجات الرف‚مية والعرضية', languageMode))}</text>
   ${sourceBlocks}
-  <text x="${baseX}" y="740" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#f8fafc">${xmlEscape(labelForLanguage('Coverage', 'نطاق التغطية', languageMode))}</text>
+  <text x="${baseX}" y="740" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="18" font-family="${xmlEscape(font)}" fill="#f8fafc">${xmlEscape(labelForLanguage('Coverage', 'نطاف‚ التغطية', languageMode))}</text>
   <text x="${baseX}" y="772" text-anchor="${anchor}" direction="${rtlLike ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" font-size="15" font-family="${xmlEscape(font)}" fill="#cbd5e1">${xmlEscape(prepareDirectionalText(summaryText, languageMode))}</text>
 </svg>`;
 }
 
 function buildPortfolioHtml(context, dossier, copiedAssets, outPath) {
   const htmlDir = path.dirname(outPath);
-  const rtlLike = isRtlLanguage(context.brand.languageMode);
-  const heroImages = copiedAssets.filter(asset => asset.type === 'image' && asset.usage !== 'logo').slice(0, 8);
-  const mapFrames = copiedAssets.filter(asset => asset.usage === 'interactive-map').slice(0, 2);
-  const modelFrames = copiedAssets.filter(asset => asset.usage === 'interactive-viewer').slice(0, 2);
-  const logoAsset = copiedAssets.find(asset => asset.usage === 'logo' && asset.copiedPath) || null;
-  const logoHtml = logoAsset
-    ? `<div class="brand-logo"><img src="${xmlEscape(toWebPath(path.relative(htmlDir, logoAsset.copiedPath)))}" alt="${xmlEscape(context.brand.projectName)} logo"></div>`
-    : '';
-  const fontStack = fontFamilyStack(context.brand.typography, context.brand.languageMode);
-  const cards = dossier.buildingRecords.map(building => `
-      <article class="panel narrative">
-        <h3 ${htmlDirectionAttrs(building.name, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(building.name, context.brand.languageMode))}</h3>
-        ${splitNarrativeParagraphs(building.summary).map(paragraph => `<p ${htmlDirectionAttrs(paragraph, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(paragraph, context.brand.languageMode))}</p>`).join('')}
-      </article>
-  `).join('\n');
-  const gallery = heroImages.map(asset => {
-    const rel = toWebPath(path.relative(htmlDir, asset.copiedPath));
-    return `<figure class="shot"><img src="${xmlEscape(rel)}" alt="${xmlEscape(asset.name)}"><figcaption ${htmlDirectionAttrs(asset.name, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(asset.name, context.brand.languageMode))}</figcaption></figure>`;
-  }).join('\n');
-  const iframeBlocks = [...mapFrames, ...modelFrames].map(asset => {
-    const rel = toWebPath(path.relative(htmlDir, asset.copiedPath));
-    return `<iframe class="embed" src="${xmlEscape(rel)}" title="${xmlEscape(asset.name)}"></iframe>`;
-  }).join('\n');
-  const narrativeSections = dossier.sections.map(section => `
-      <section class="doc-section panel narrative">
-        <h2 ${htmlDirectionAttrs(section.title, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(section.title, context.brand.languageMode))}</h2>
-        ${splitNarrativeParagraphs(section.body).map(paragraph => `<p ${htmlDirectionAttrs(paragraph, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(paragraph, context.brand.languageMode))}</p>`).join('')}
-      </section>
-  `).join('\n');
-  const references = dossier.references.map(ref => {
-    const text = `${ref.title} - ${ref.note}`;
-    return `<li ${htmlDirectionAttrs(text, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(text, context.brand.languageMode))}</li>`;
-  }).join('');
-  const html = `<!DOCTYPE html>
-<html lang="${rtlLike ? 'ar' : 'en'}" dir="${rtlLike ? 'rtl' : 'ltr'}">
+  const lang = context.brand.languageMode;
+  const rtlLike = isRtlLanguage(lang);
+  const lbl = (en, ar) => labelForLanguage(en, ar, lang);
+  const dir = rtlLike ? 'rtl' : 'ltr';
+  const fontStack = fontFamilyStack(context.brand.typography, lang);
+  const primary = context.brand.primaryColor;
+  const accent = context.brand.accentColor;
+
+  const outputRoot = path.resolve(OUTPUTS_DIR);
+  const assetUrl = absPath => {
+    const resolved = path.resolve(absPath || '');
+    if (resolved.startsWith(outputRoot)) {
+      return `/outputs/${toWebPath(path.relative(outputRoot, resolved))}`;
+    }
+    return toWebPath(path.relative(htmlDir, resolved));
+  };
+  const logoAsset = copiedAssets.find(a => a.usage === 'logo' && a.copiedPath) || null;
+  const logoSrc = logoAsset ? assetUrl(logoAsset.copiedPath) : '';
+
+  const webImgs = copiedAssets.filter(a => a.copiedPath && isWebReadyImage(fileExt(a.copiedPath)) && a.usage !== 'logo');
+  const models3d = copiedAssets.filter(a => a.copiedPath && a.type === 'model' && ['.glb', '.gltf'].includes(fileExt(a.copiedPath)));
+
+  // â”€â”€ shared CSS + inline three.js minimal GLB viewer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const sharedCss = `
+:root{--bg:${primary};--accent:${accent};--card:#0d1b2a;--line:rgba(255,255,255,.11);--text:#f1f5f9;--muted:#94a3b8;--radius:18px}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:${fontStack};background:linear-gradient(135deg,${primary} 0%,#060e14 70%);color:var(--text);direction:${dir};text-align:${rtlLike?'right':'left'};min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1200px;margin:0 auto;padding:32px 20px 64px}
+nav{position:sticky;top:0;z-index:100;background:rgba(6,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+nav .logo-img{height:40px;object-fit:contain}
+nav .site-title{font-weight:700;font-size:15px;flex:1}
+nav .nav-links{display:flex;gap:10px;flex-wrap:wrap}
+nav .nav-links a{padding:6px 12px;border-radius:999px;font-size:13px;border:1px solid var(--line);transition:background .2s}
+nav .nav-links a:hover,nav .nav-links a.active{background:rgba(255,255,255,.08)}
+.hero{padding:46px 38px;border:1px solid var(--line);border-radius:28px;background:rgba(255,255,255,.03);backdrop-filter:blur(8px);margin-bottom:28px}
+.eyebrow{display:inline-block;padding:7px 14px;border-radius:999px;background:rgba(223,175,103,.13);color:var(--accent);font-weight:700;font-size:12px;letter-spacing:.04em;margin-bottom:14px}
+h1{font-size:clamp(26px,5vw,44px);line-height:1.1;margin-bottom:12px}
+h2{font-size:22px;margin-bottom:14px;color:var(--text)}
+h3{font-size:17px;margin-bottom:8px;color:var(--text)}
+p{color:var(--muted);line-height:1.85;margin-bottom:12px}
+.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-top:22px}
+.metric{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:var(--radius);padding:18px;text-align:center}
+.metric strong{display:block;font-size:32px;color:var(--accent);margin-bottom:4px}
+.metric span{font-size:13px;color:var(--muted)}
+.section-block{background:rgba(13,27,42,.8);border:1px solid var(--line);border-radius:var(--radius);padding:26px;margin-bottom:20px}
+.section-heading{font-size:15px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:10px}
+.gallery-item{position:relative;border-radius:14px;overflow:hidden;cursor:pointer;border:1px solid var(--line);aspect-ratio:4/3;background:#0a1520}
+.gallery-item img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s,opacity .3s}
+.gallery-item:hover img{transform:scale(1.05);opacity:.85}
+.gallery-item figcaption{position:absolute;bottom:0;left:0;right:0;padding:8px 10px;background:rgba(0,0,0,.65);font-size:11.5px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lightbox{display:none;position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.92);align-items:center;justify-content:center;flex-direction:column}
+.lightbox.open{display:flex}
+.lightbox img{max-width:92vw;max-height:82vh;border-radius:12px;object-fit:contain}
+.lightbox-caption{color:#cbd5e1;font-size:13px;margin-top:10px;text-align:center}
+.lightbox-close{position:absolute;top:18px;right:20px;font-size:28px;cursor:pointer;color:#fff}
+.model-viewer{width:100%;height:360px;border:1px solid var(--line);border-radius:var(--radius);background:#060e14;position:relative;overflow:hidden;margin-top:10px}
+.model-viewer canvas{display:block;width:100%!important;height:100%!important}
+.model-viewer .hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:var(--muted);pointer-events:none}
+.building-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-top:16px}
+.building-card{background:rgba(13,27,42,.8);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .25s,box-shadow .25s;display:flex;flex-direction:column}
+.building-card:hover{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,0,0,.4)}
+.building-card-thumb{width:100%;height:170px;object-fit:cover;display:block;background:#0a1520}
+.building-card-body{padding:16px;flex:1;display:flex;flex-direction:column;gap:6px}
+.building-card-body h3{font-size:15px}
+.building-card-body p{font-size:13px;flex:1}
+.building-card-body a.btn{display:inline-block;margin-top:10px;padding:8px 16px;background:var(--accent);color:#0c1118;border-radius:999px;font-weight:700;font-size:13px;transition:opacity .2s}
+.building-card-body a.btn:hover{opacity:.85;text-decoration:none}
+.tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;background:rgba(255,255,255,.08);color:var(--muted);margin:2px}
+.no-content{color:var(--muted);font-size:14px;padding:20px 0;text-align:center}
+@media(max-width:600px){.hero{padding:26px 20px}h1{font-size:26px}.gallery-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+`;
+
+  // â”€â”€ Inline minimal three.js GLB viewer script â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Uses three.js r158 from CDN - but we inline the loader call only; the user
+  // can open without internet because we reference local .glb files, but three.js
+  // itself needs to be included. We embed a tiny fallback canvas message if no JS.
+  // For true offline we bundle model-viewer web-component via a data-uri style trick.
+  // Practical solution: write three.js + GLTFLoader minimal bundle to portfolio dir.
+  const threeScriptPath = path.join(htmlDir, 'three_bundle.js');
+  const threeBundle = `
+/* Minimal three.js GLB viewer - generated by Service 06 */
+(function(){
+function initViewer(canvas, modelSrc) {
+  if (!window.THREE) { canvas.parentElement.querySelector('.hint').textContent = '3D viewer requires JavaScript'; return; }
+  var T = window.THREE;
+  var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+  renderer.outputColorSpace = T.SRGBColorSpace;
+  var scene = new T.Scene();
+  var camera = new T.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.01, 1000);
+  camera.position.set(0, 1.5, 4);
+  scene.add(new T.AmbientLight(0xffffff, 1.2));
+  var dir = new T.DirectionalLight(0xffffff, 1.8); dir.position.set(3, 6, 4); scene.add(dir);
+  var loader = new T.GLTFLoader ? new T.GLTFLoader() : null;
+  if (!loader) { canvas.parentElement.querySelector('.hint').textContent = 'GLTFLoader unavailable'; return; }
+  loader.load(modelSrc, function(gltf) {
+    var obj = gltf.scene;
+    var box = new T.Box3().setFromObject(obj);
+    var center = box.getCenter(new T.Vector3());
+    var size = box.getSize(new T.Vector3()).length();
+    obj.position.sub(center);
+    camera.position.set(0, size * 0.3, size * 1.2);
+    camera.near = size * 0.001; camera.far = size * 100; camera.updateProjectionMatrix();
+    scene.add(obj);
+  }, null, function(){ canvas.parentElement.querySelector('.hint').textContent = 'Could not load model'; });
+  var isDragging = false, prevX = 0, prevY = 0, rotX = 0, rotY = 0;
+  canvas.addEventListener('mousedown', function(e){ isDragging=true; prevX=e.clientX; prevY=e.clientY; });
+  canvas.addEventListener('mousemove', function(e){ if(!isDragging) return; rotY+=(e.clientX-prevX)*0.01; rotX+=(e.clientY-prevY)*0.01; prevX=e.clientX; prevY=e.clientY; });
+  canvas.addEventListener('mouseup', function(){ isDragging=false; });
+  canvas.addEventListener('touchstart', function(e){ prevX=e.touches[0].clientX; prevY=e.touches[0].clientY; },{passive:true});
+  canvas.addEventListener('touchmove', function(e){ rotY+=(e.touches[0].clientX-prevX)*0.01; rotX+=(e.touches[0].clientY-prevY)*0.01; prevX=e.touches[0].clientX; prevY=e.touches[0].clientY; },{passive:true});
+  function animate(){ requestAnimationFrame(animate); scene.rotation.y=rotY; scene.rotation.x=rotX; renderer.render(scene,camera); }
+  animate();
+}
+window._initGlbViewer = initViewer;
+})();
+`;
+  try { fs.writeFileSync(threeScriptPath, threeBundle); } catch { /* non-fatal */ }
+
+  // â”€â”€ helpers for HTML pages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  function rel(absPath) { return xmlEscape(assetUrl(absPath)); }
+  function dattr(text) { return htmlDirectionAttrs(text, lang); }
+  function dt(text) { return xmlEscape(prepareDirectionalText(text, lang)); }
+
+  function gallerySection(titleEn, titleAr, assets, idPrefix) {
+    if (!assets.length) return '';
+    const items = assets.map((a, i) => {
+      const src = rel(a.copiedPath);
+      const cap = a.name || '';
+      return `<figure class="gallery-item" onclick="openLb('${idPrefix}',${i})">
+  <img src="${src}" alt="${xmlEscape(cap)}" loading="lazy">
+  <figcaption ${dattr(cap)}>${dt(cap)}</figcaption>
+</figure>`;
+    }).join('\n');
+    const lbImgs = assets.map(a =>
+      `<img src="${rel(a.copiedPath)}" alt="${xmlEscape(a.name||'')}" loading="lazy">`,
+    ).join('\n');
+    return `
+<div class="section-block">
+  <div class="section-heading" ${dattr(lbl(titleEn,titleAr))}>${dt(lbl(titleEn,titleAr))}</div>
+  <div class="gallery-grid">${items}</div>
+</div>
+<div class="lightbox" id="lb_${idPrefix}" onclick="closeLb('${idPrefix}')">
+  <span class="lightbox-close" onclick="closeLb('${idPrefix}')">&times;</span>
+  <div id="lb_${idPrefix}_imgs" style="display:contents">${lbImgs}</div>
+  <div class="lightbox-caption" id="lb_${idPrefix}_cap"></div>
+</div>`;
+  }
+
+  function modelViewerBlock(modelsArr) {
+    if (!modelsArr.length) return '';
+    const tabs = modelsArr.map((m, i) => {
+      const src = rel(m.copiedPath);
+      const mid = `mdl_${i}_${Math.random().toString(36).slice(2,7)}`;
+      return `
+<div class="section-block" style="margin-bottom:14px">
+  <div class="section-heading" ${dattr(m.name)}>${dt(m.name)}</div>
+  <div class="model-viewer">
+    <canvas id="${mid}" style="width:100%;height:100%"></canvas>
+    <div class="hint">${'Drag to rotate 3D model'}</div>
+  </div>
+  <script>window.addEventListener('load',function(){if(window._initGlbViewer){var c=document.getElementById('${mid}');window._initGlbViewer(c,'${src}');}});<\/script>
+</div>`;
+    }).join('\n');
+    return tabs;
+  }
+
+  function navHtml(activePage = 'index') {
+    const buildingLinks = dossier.buildingRecords.map((b, i) => {
+      const slug = `building_${i + 1}.html`;
+      const isActive = activePage === slug ? ' class="active"' : '';
+      return `<a href="${slug}"${isActive} title="${xmlEscape(b.name)}">${dt(b.name.split(/[\s,،]/)[0])}</a>`;
+    }).join('');
+    return `<nav>
+  ${logoSrc ? `<img class="logo-img" src="${xmlEscape(logoSrc)}" alt="logo">` : ''}
+  <span class="site-title" ${dattr(context.brand.projectName)}>${dt(context.brand.projectName)}</span>
+  <div class="nav-links">
+    <a href="index.html"${activePage === 'index' ? ' class="active"' : ''}>${dt('Home')}</a>
+    ${buildingLinks}
+  </div>
+</nav>`;
+  }
+
+  function pageShell(titleText, bodyContent, activePage = 'index') {
+    return `<!DOCTYPE html>
+<html lang="${rtlLike ? 'ar' : 'en'}" dir="${dir}">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${xmlEscape(context.brand.projectName)}</title>
-  <style>
-    :root{--bg:${context.brand.primaryColor};--card:#102033;--line:rgba(255,255,255,.12);--accent:${context.brand.accentColor};--text:#f8fafc;--muted:#cbd5e1;--page-align:${rtlLike ? 'right' : 'left'}}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:${fontStack};background:radial-gradient(circle at top left,${context.brand.primaryColor},#09111b 60%);color:var(--text);text-align:var(--page-align)}
-    h1,h2,h3,p,li,figcaption,.eyebrow{unicode-bidi:plaintext}
-    .rtl-block{direction:rtl;text-align:right}
-    .ltr-block{direction:ltr;text-align:left}
-    .wrap{max-width:1180px;margin:0 auto;padding:40px 22px 60px}
-    .hero{padding:38px;border:1px solid var(--line);border-radius:30px;background:rgba(255,255,255,.04);backdrop-filter:blur(10px)}
-    .brand-logo{display:flex;justify-content:center;margin-bottom:18px}
-    .brand-logo img{max-width:180px;max-height:88px;object-fit:contain;display:block}
-    .eyebrow{display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(223,175,103,.14);color:var(--accent);font-weight:700;font-size:13px}
-    h1{font-size:42px;line-height:1.15;margin:18px 0 10px}
-    h2{margin:0 0 14px;font-size:28px}
-    h3{margin:0 0 10px}
-    p{color:var(--muted);line-height:1.9;margin:0 0 12px}
-    ul{margin:0;padding-${rtlLike ? 'right' : 'left'}:20px}
-    li{color:var(--muted);line-height:1.8;margin-bottom:8px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-top:26px}
-    .panel{background:rgba(16,32,51,.88);border:1px solid var(--line);border-radius:22px;padding:22px}
-    .metrics strong{font-size:34px;display:block;margin-bottom:8px}
-    .narrative{padding:26px}
-    .stack{display:grid;gap:18px;margin-top:28px}
-    .gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px}
-    .shot{margin:0;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:18px;overflow:hidden}
-    .shot img{width:100%;height:180px;object-fit:cover;display:block}
-    .shot figcaption{padding:12px 14px;font-size:13px;color:var(--muted)}
-    .embeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;margin-top:20px}
-    .embed{width:100%;min-height:380px;border:1px solid var(--line);border-radius:22px;background:#fff}
-    @media (max-width:700px){h1{font-size:32px}.hero{padding:26px}}
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${xmlEscape(titleText)} — ${xmlEscape(context.brand.projectName)}</title>
+<style>${sharedCss}</style>
+<script>
+function openLb(id,idx){
+  var lb=document.getElementById('lb_'+id);
+  var imgs=lb.querySelectorAll('img');
+  imgs.forEach(function(img,i){img.style.display=i===idx?'block':'none';});
+  var caps=lb.querySelectorAll('figcaption');
+  document.getElementById('lb_'+id+'_cap').textContent=imgs[idx]?imgs[idx].alt:'';
+  lb.classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeLb(id){
+  document.getElementById('lb_'+id).classList.remove('open');
+  document.body.style.overflow='';
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('.lightbox.open').forEach(function(lb){lb.classList.remove('open');document.body.style.overflow='';});}});
+<\/script>
+<script src="three_bundle.js"><\/script>
 </head>
 <body>
-  <div class="wrap">
-    <section class="hero">
-      ${logoHtml}
-      <span class="eyebrow" ${htmlDirectionAttrs(labelForLanguage('Final Project Dossier', '\u0627\u0644\u0648\u062b\u064a\u0642\u0629 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629 \u0644\u0644\u0645\u0634\u0631\u0648\u0639', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Final Project Dossier', '\u0627\u0644\u0648\u062b\u064a\u0642\u0629 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629 \u0644\u0644\u0645\u0634\u0631\u0648\u0639', context.brand.languageMode))}</span>
-      <h1 ${htmlDirectionAttrs(context.brand.projectName, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(context.brand.projectName, context.brand.languageMode))}</h1>
-      ${splitNarrativeParagraphs(dossier.executiveSummary).map(paragraph => `<p ${htmlDirectionAttrs(paragraph, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(paragraph, context.brand.languageMode))}</p>`).join('')}
-      <div class="grid">
-        <div class="panel metrics"><strong>${copiedAssets.length}</strong><p ${htmlDirectionAttrs(labelForLanguage('Packaged files organized into the final delivery structure.', '\u0645\u0644\u0641\u0627\u062a \u0645\u0646\u0638\u0645\u0629 \u062f\u0627\u062e\u0644 \u0628\u0646\u064a\u0629 \u0627\u0644\u062a\u0633\u0644\u064a\u0645 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629.', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Packaged files organized into the final delivery structure.', '\u0645\u0644\u0641\u0627\u062a \u0645\u0646\u0638\u0645\u0629 \u062f\u0627\u062e\u0644 \u0628\u0646\u064a\u0629 \u0627\u0644\u062a\u0633\u0644\u064a\u0645 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629.', context.brand.languageMode))}</p></div>
-        <div class="panel metrics"><strong>${dossier.buildingRecords.length}</strong><p ${htmlDirectionAttrs(labelForLanguage('Building-level documentation sections.', '\u0623\u0642\u0633\u0627\u0645 \u062a\u0648\u062b\u064a\u0642 \u0639\u0644\u0649 \u0645\u0633\u062a\u0648\u0649 \u0627\u0644\u0645\u0628\u0627\u0646\u064a.', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Building-level documentation sections.', '\u0623\u0642\u0633\u0627\u0645 \u062a\u0648\u062b\u064a\u0642 \u0639\u0644\u0649 \u0645\u0633\u062a\u0648\u0649 \u0627\u0644\u0645\u0628\u0627\u0646\u064a.', context.brand.languageMode))}</p></div>
-        <div class="panel metrics"><strong>${Object.keys(context.contentModel.bySource).length}</strong><p ${htmlDirectionAttrs(labelForLanguage('Linked source sets represented honestly in the dossier.', '\u0645\u062c\u0645\u0648\u0639\u0627\u062a \u0645\u0635\u0627\u062f\u0631 \u0645\u0631\u062a\u0628\u0637\u0629 \u0645\u0645\u062b\u0644\u0629 \u0628\u0648\u0636\u0648\u062d \u062f\u0627\u062e\u0644 \u0627\u0644\u0648\u062b\u064a\u0642\u0629.', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Linked source sets represented honestly in the dossier.', '\u0645\u062c\u0645\u0648\u0639\u0627\u062a \u0645\u0635\u0627\u062f\u0631 \u0645\u0631\u062a\u0628\u0637\u0629 \u0645\u0645\u062b\u0644\u0629 \u0628\u0648\u0636\u0648\u062d \u062f\u0627\u062e\u0644 \u0627\u0644\u0648\u062b\u064a\u0642\u0629.', context.brand.languageMode))}</p></div>
-      </div>
-    </section>
-    <div class="stack">
-      <section class="panel narrative">
-        <h2 ${htmlDirectionAttrs(labelForLanguage('Methodology', '\u0627\u0644\u0645\u0646\u0647\u062c\u064a\u0629', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Methodology', '\u0627\u0644\u0645\u0646\u0647\u062c\u064a\u0629', context.brand.languageMode))}</h2>
-        ${splitNarrativeParagraphs(dossier.methodology).map(paragraph => `<p ${htmlDirectionAttrs(paragraph, context.brand.languageMode)}>${xmlEscape(prepareDirectionalText(paragraph, context.brand.languageMode))}</p>`).join('')}
-      </section>
-      ${narrativeSections}
-      <section class="panel narrative">
-        <h2 ${htmlDirectionAttrs(labelForLanguage('Building Documentation', '\u062a\u0648\u062b\u064a\u0642 \u0627\u0644\u0645\u0628\u0627\u0646\u064a', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Building Documentation', '\u062a\u0648\u062b\u064a\u0642 \u0627\u0644\u0645\u0628\u0627\u0646\u064a', context.brand.languageMode))}</h2>
-        <div class="grid">${cards}</div>
-      </section>
-      <section class="panel narrative">
-        <h2 ${htmlDirectionAttrs(labelForLanguage('Visual Gallery', '\u0627\u0644\u0645\u0639\u0631\u0636 \u0627\u0644\u0628\u0635\u0631\u064a', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Visual Gallery', '\u0627\u0644\u0645\u0639\u0631\u0636 \u0627\u0644\u0628\u0635\u0631\u064a', context.brand.languageMode))}</h2>
-        <div class="gallery">${gallery}</div>
-      </section>
-      <section class="panel narrative">
-        <h2 ${htmlDirectionAttrs(labelForLanguage('Interactive Material', '\u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0627\u0644\u062a\u0641\u0627\u0639\u0644\u064a', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('Interactive Material', '\u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0627\u0644\u062a\u0641\u0627\u0639\u0644\u064a', context.brand.languageMode))}</h2>
-        <div class="embeds">${iframeBlocks || `<div class="panel"><p ${htmlDirectionAttrs(labelForLanguage('No interactive HTML outputs were linked. The final package still includes structured standalone files and narrative documentation.', '\u0644\u0645 \u064a\u062a\u0645 \u0631\u0628\u0637 \u0645\u062e\u0631\u062c\u0627\u062a HTML \u062a\u0641\u0627\u0639\u0644\u064a\u0629\u060c \u0648\u0645\u0639 \u0630\u0644\u0643 \u062a\u062a\u0636\u0645\u0646 \u0627\u0644\u062d\u0632\u0645\u0629 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629 \u0645\u0644\u0641\u0627\u062a \u0645\u0633\u062a\u0642\u0644\u0629 \u0645\u0646\u0638\u0645\u0629 \u0648\u0648\u062b\u064a\u0642\u0629 \u0633\u0631\u062f\u064a\u0629.', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('No interactive HTML outputs were linked. The final package still includes structured standalone files and narrative documentation.', '\u0644\u0645 \u064a\u062a\u0645 \u0631\u0628\u0637 \u0645\u062e\u0631\u062c\u0627\u062a HTML \u062a\u0641\u0627\u0639\u0644\u064a\u0629\u060c \u0648\u0645\u0639 \u0630\u0644\u0643 \u062a\u062a\u0636\u0645\u0646 \u0627\u0644\u062d\u0632\u0645\u0629 \u0627\u0644\u0646\u0647\u0627\u0626\u064a\u0629 \u0645\u0644\u0641\u0627\u062a \u0645\u0633\u062a\u0642\u0644\u0629 \u0645\u0646\u0638\u0645\u0629 \u0648\u0648\u062b\u064a\u0642\u0629 \u0633\u0631\u062f\u064a\u0629.', context.brand.languageMode))}</p></div>`}</div>
-      </section>
-      <section class="panel narrative">
-        <h2 ${htmlDirectionAttrs(labelForLanguage('References', '\u0627\u0644\u0645\u0631\u0627\u062c\u0639', context.brand.languageMode), context.brand.languageMode)}>${xmlEscape(labelForLanguage('References', '\u0627\u0644\u0645\u0631\u0627\u062c\u0639', context.brand.languageMode))}</h2>
-        <ul>${references}</ul>
-      </section>
-    </div>
-  </div>
+${navHtml(activePage)}
+<div class="wrap">${bodyContent}</div>
 </body>
 </html>`;
+  }
 
-  fs.writeFileSync(outPath, html);
+  // â”€â”€ INDEX PAGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const allGalleryImgs = webImgs.slice(0, 12);
+  const allGalleryHtml = gallerySection('Visual Gallery', 'معرض بصري', allGalleryImgs, 'idx_gallery');
+  const allModels = models3d.slice(0, 4);
+  const allModelsHtml = modelViewerBlock(allModels);
+
+  const buildingCardsHtml = dossier.buildingRecords.map((b, i) => {
+    const slug = `building_${i + 1}.html`;
+    const thumbImg = copiedAssets.find(a =>
+      a.copiedPath && isWebReadyImage(fileExt(a.copiedPath)) && a.usage !== 'logo' &&
+      normalizeText(a.building) === b.name,
+    ) || webImgs[i % Math.max(webImgs.length, 1)];
+    const thumbSrc = thumbImg ? rel(thumbImg.copiedPath) : '';
+    return `<div class="building-card">
+  ${thumbSrc ? `<img class="building-card-thumb" src="${thumbSrc}" alt="${xmlEscape(b.name)}" loading="lazy">` : '<div class="building-card-thumb"></div>'}
+  <div class="building-card-body">
+    <h3 ${dattr(b.name)}>${dt(b.name)}</h3>
+    <p ${dattr(b.summary)}>${dt(b.summary.slice(0, 120))}${b.summary.length > 120 ? '...' : ''}</p>
+    <a class="btn" href="${slug}">${dt(lbl('View Details','عرض التفاصيل'))}</a>
+  </div>
+</div>`;
+  }).join('\n');
+
+  const indexBody = `
+<section class="hero">
+  ${logoSrc ? `<div style="text-align:center;margin-bottom:16px"><img src="${xmlEscape(logoSrc)}" style="max-height:72px;object-fit:contain" alt="logo"></div>` : ''}
+  <span class="eyebrow">${dt(lbl('Digital Portfolio','المحفظة الرف‚مية'))}</span>
+  <h1 ${dattr(context.brand.projectName)}>${dt(context.brand.projectName)}</h1>
+  ${splitNarrativeParagraphs(dossier.executiveSummary).map(p => `<p ${dattr(p)}>${dt(p)}</p>`).join('')}
+  <div class="metrics-row">
+    <div class="metric"><strong>${copiedAssets.length}</strong><span>${dt(lbl('Total files','إجمالي الملفات'))}</span></div>
+    <div class="metric"><strong>${dossier.buildingRecords.length}</strong><span>${dt(lbl('Buildings','المباني'))}</span></div>
+    <div class="metric"><strong>${webImgs.length}</strong><span>${dt(lbl('Images','صور'))}</span></div>
+    <div class="metric"><strong>${models3d.length}</strong><span>${dt(lbl('3D Models','نماذج ثلاثية الأبعاد'))}</span></div>
+  </div>
+</section>
+
+<div class="section-block">
+  <div class="section-heading">${dt(lbl('Building Documentation','توثيف‚ المباني'))}</div>
+  <div class="building-cards">${buildingCardsHtml || `<p class="no-content">${dt(lbl('No buildings found.','لم تُعثر علف‰ مباني.'))}</p>`}</div>
+</div>
+
+${allGalleryHtml}
+${allModelsHtml}
+`;
+
+  fs.writeFileSync(outPath, pageShell(lbl('Home', 'الرئيسية'), indexBody, 'index'));
+
+  // â”€â”€ PER-BUILDING PAGES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  dossier.buildingRecords.forEach((building, bIdx) => {
+    const slug = `building_${bIdx + 1}.html`;
+    const outBldg = path.join(htmlDir, slug);
+    const bAssets = building.assets.filter(a => a.copiedPath);
+
+    const bWebImgs = bAssets.filter(a => isWebReadyImage(fileExt(a.copiedPath)) && a.copiedPath);
+    const bModels = bAssets.filter(a => ['.glb', '.gltf'].includes(fileExt(a.copiedPath)));
+    const imgBySvc = svc => bWebImgs.filter(a => a.service === svc);
+
+    const beforeAfterSection = gallerySection('Before / After Photos', 'صور ف‚بل / بعد', imgBySvc(1).slice(0, 8), `b${bIdx}_ba`);
+    const drawingImgs = bWebImgs.filter(a => a.service === 2 && (a.type === 'drawing' || a.usage === 'technical-drawing')).slice(0, 8);
+    const drawingsSection = gallerySection('Architectural Drawings', 'المخططات المعمارية (مساف‚طي واجف‡اتي مف‚اطع)', drawingImgs, `b${bIdx}_drw`);
+    const vizImgs = [...imgBySvc(2), ...imgBySvc(5)].slice(0, 10);
+    const vizSection = gallerySection('2D & 3D Visualizations', 'التصورات ثنائية وثلاثية الأبعاد', vizImgs, `b${bIdx}_viz`);
+    const histImgs = imgBySvc(4).slice(0, 6);
+    const histSection = gallerySection('Historical Photos', 'الصور التاريخية', histImgs, `b${bIdx}_hist`);
+    const allBuildingImgsSection = !beforeAfterSection && !drawingsSection && !vizSection && !histSection
+      ? gallerySection('Available Images', 'الصور المتاحة', bWebImgs.slice(0, 12), `b${bIdx}_all`)
+      : '';
+
+    const s4Job = context.linkedJobs?.find(j => j.service === 4) || null;
+    const histText = s4Job?.metadata?.project?.description || s4Job?.metadata?.summary
+      || lbl('Historical documentation was prepared as part of the academic reporting phase.', 'أُعد التوثيف‚ التاريخي ضمن مرحلة إعداد التف‚ارير الأفƒاديمية.');
+
+    const otherFiles = bAssets.filter(a => !isWebReadyImage(fileExt(a.copiedPath)) && !(['.glb', '.gltf'].includes(fileExt(a.copiedPath)))).slice(0, 20);
+    const fileListHtml = otherFiles.length
+      ? `<div class="section-block">
+  <div class="section-heading">${dt(lbl('Linked Documents & Files', 'الملفات والوثائف‚ المرتبطة'))}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${otherFiles.map(a => `<a href="${rel(a.copiedPath)}" target="_blank" class="tag">- ${xmlEscape(a.name)}</a>`).join('')}</div>
+</div>` : '';
+
+    const bHeroImg = bWebImgs[0];
+    const bldgBody = `
+<section class="hero">
+  ${bHeroImg ? `<img src="${rel(bHeroImg.copiedPath)}" alt="${xmlEscape(building.name)}" style="width:100%;max-height:340px;object-fit:cover;border-radius:16px;margin-bottom:22px">` : ''}
+  <span class="eyebrow">${dt(lbl('Building Documentation','توثيف‚ المبنف‰'))}</span>
+  <h1 ${dattr(building.name)}>${dt(building.name)}</h1>
+  <p ${dattr(context.brand.projectName)} style="font-size:14px;color:var(--accent)">${dt(context.brand.projectName)}</p>
+  <div class="metrics-row" style="margin-top:14px">
+    <div class="metric"><strong>${bAssets.length}</strong><span>${dt(lbl('Total assets','إجمالي الأصول'))}</span></div>
+    <div class="metric"><strong>${bWebImgs.length}</strong><span>${dt(lbl('Images','صور'))}</span></div>
+    <div class="metric"><strong>${bModels.length}</strong><span>${dt(lbl('3D Models','نماذج ثلاثية الأبعاد'))}</span></div>
+  </div>
+</section>
+
+<div class="section-block">
+  <div class="section-heading">${dt(lbl('Architectural Description', 'الوصف المعماري الفƒامل'))}</div>
+  ${splitNarrativeParagraphs(building.summary).map(p => `<p ${dattr(p)}>${dt(p)}</p>`).join('')}
+</div>
+
+${beforeAfterSection}
+${drawingsSection}
+${vizSection}
+
+<div class="section-block">
+  <div class="section-heading">${dt(lbl('Historical Analysis', 'التحليل التاريخي'))}</div>
+  <p ${dattr(histText)}>${dt(histText)}</p>
+</div>
+${histSection}
+${allBuildingImgsSection}
+
+${bModels.length ? `<div class="section-block">
+  <div class="section-heading">${dt(lbl('3D Model Viewer','عارض النماذج ثلاثية الأبعاد'))}</div>
+  <p ${dattr(lbl('Drag and pinch to rotate and zoom the model.','اسحب وف‚رف‘ب/بعف‘د لتدوير النموذج وتفƒبيرف‡.'))} style="margin-bottom:12px">${dt(lbl('Drag and pinch to rotate and zoom.','اسحب وف‚رف‘ب/بعف‘د للتحفƒم في العرض.'))}</p>
+  ${modelViewerBlock(bModels.slice(0, 3))}
+</div>` : ''}
+
+${fileListHtml}
+
+<div style="margin-top:24px">
+  <a href="index.html" style="color:var(--muted);font-size:14px">&larr; ${dt(lbl('Back to project home','العودة إلف‰ الصفحة الرئيسية'))}</a>
+</div>`;
+
+    fs.writeFileSync(outBldg, pageShell(building.name, bldgBody, slug));
+  });
 }
 router.get('/jobs', (req, res) => {
   try {
@@ -3553,6 +4873,8 @@ router.post('/generate', (req, res, next) => {
     const context = buildProjectContext(req.body || {}, dedupedJobs, uploadedFilesSummary);
     const contentModel = buildContentModel(context.project, dedupedJobs, uploadedFilesSummary, context.brand.languageMode);
     context.contentModel = contentModel;
+    context.linkedJobs = dedupedJobs;
+
     const dossier = buildDossierModel(context, dedupedJobs, contentModel);
 
     const packageRootName = `RUAA_Project_${slugify(context.brand.projectName, 'project')}`;
@@ -3610,7 +4932,7 @@ router.post('/generate', (req, res, next) => {
         {
           title: labelForLanguage('Available Outputs', 'المخرجات المتاحة', context.brand.languageMode),
           subtitle: building.assets.slice(0, 10).map(asset => `${asset.name} (${localizedAssetType(asset.type, context.brand.languageMode)})`).join(' | ')
-            || localizeTemplateText('No building-specific files were indexed.', 'لم يتم فهرسة ملفات خاصة بهذا المبنى.', context.brand.languageMode),
+            || localizeTemplateText('No building-specific files were indexed.', 'لم يتم فف‡رسة ملفات خاصة بف‡ذا المبنف‰.', context.brand.languageMode),
           imagePath: null,
         },
       ], building.name, buildingPptPath, {
@@ -3633,7 +4955,7 @@ router.post('/generate', (req, res, next) => {
         imagePath: representativeImages[0]?.path || null,
       },
       {
-        title: labelForLanguage('Documentation Scope', 'نطاق التوثيق', context.brand.languageMode),
+        title: labelForLanguage('Documentation Scope', 'نطاف‚ التوثيف‚', context.brand.languageMode),
         subtitle: dossier.methodology,
         imagePath: representativeImages[1]?.path || null,
       },
@@ -3655,27 +4977,27 @@ router.post('/generate', (req, res, next) => {
     fs.writeFileSync(userGuidePath, [
       localizeTemplateText(`${context.brand.projectName} - User Guide`, `${context.brand.projectName} - دليل الاستخدام`, context.brand.languageMode),
       '',
-      localizeTemplateText('1. Open the PDF dossier for official review or printing.', '1. افتح ملف PDF الخاص بالوثيقة الشاملة للمراجعة الرسمية أو الطباعة.', context.brand.languageMode),
-      localizeTemplateText('2. Open the DOCX dossier when editable narrative formatting is required.', '2. افتح ملف DOCX عندما تكون هناك حاجة إلى تعديل السرد أو التنسيق.', context.brand.languageMode),
-      localizeTemplateText('3. Use the PPTX deck for presentation and stakeholder briefing.', '3. استخدم ملف PPTX للعروض التقديمية وإحاطة أصحاب المصلحة.', context.brand.languageMode),
-      localizeTemplateText('4. Open 07_Digital_Portfolio/HTML_Website/index.html for the portfolio microsite.', '4. افتح 07_Digital_Portfolio/HTML_Website/index.html لعرض موقع المحفظة الرقمية.', context.brand.languageMode),
-      localizeTemplateText('5. Review 04_Reports/Data_Excel/generated_outputs.xlsx for the full output inventory.', '5. راجع 04_Reports/Data_Excel/generated_outputs.xlsx للاطلاع على قائمة المخرجات كاملة.', context.brand.languageMode),
-      localizeTemplateText('6. Review 08_Media/Videos for script-ready promotional content.', '6. راجع 08_Media/Videos للوصول إلى المحتوى الإعلامي الجاهز للنصوص.', context.brand.languageMode),
+      localizeTemplateText('1. Open the PDF dossier for official review or printing.', '1. افتح ملف PDF الخاص بالوثيف‚ة الشاملة للمراجعة الرسمية أو الطباعة.', context.brand.languageMode),
+      localizeTemplateText('2. Open the DOCX dossier when editable narrative formatting is required.', '2. افتح ملف DOCX عندما تفƒون ف‡نافƒ حاجة إلف‰ تعديل السرد أو التنسيف‚.', context.brand.languageMode),
+      localizeTemplateText('3. Use the PPTX deck for presentation and stakeholder briefing.', '3. استخدم ملف PPTX للعروض التف‚ديمية وإحاطة أصحاب المصلحة.', context.brand.languageMode),
+      localizeTemplateText('4. Open 07_Digital_Portfolio/HTML_Website/index.html for the portfolio microsite.', '4. افتح 07_Digital_Portfolio/HTML_Website/index.html لعرض موف‚ع المحفظة الرف‚مية.', context.brand.languageMode),
+      localizeTemplateText('5. Review 04_Reports/Data_Excel/generated_outputs.xlsx for the full output inventory.', '5. راجع 04_Reports/Data_Excel/generated_outputs.xlsx للاطلاع علف‰ ف‚ائمة المخرجات فƒاملة.', context.brand.languageMode),
+      localizeTemplateText('6. Review 08_Media/Videos for script-ready promotional content.', '6. راجع 08_Media/Videos للوصول إلف‰ المحتوف‰ الإعلامي الجاف‡ز للنصوص.', context.brand.languageMode),
     ].join('\n'));
 
     buildPortfolioHtml(context, dossier, copiedAssets, portfolioHtmlPath);
 
     const generatedDeliverables = [
-      { label: localizeTemplateText('Main Dossier (PDF)', 'الوثيقة الشاملة (PDF)', context.brand.languageMode), path: dossierPdfPath },
-      { label: localizeTemplateText('Main Dossier (Word)', 'الوثيقة الشاملة (Word)', context.brand.languageMode), path: dossierWordPath },
-      { label: localizeTemplateText('Project Summary (PPTX)', 'ملخص المشروع (PPTX)', context.brand.languageMode), path: projectPptPath },
-      { label: localizeTemplateText('Digital Portfolio (HTML)', 'المحفظة الرقمية (HTML)', context.brand.languageMode), path: portfolioHtmlPath },
-      { label: localizeTemplateText('Infographic (SVG)', 'الإنفوجرافيك (SVG)', context.brand.languageMode), path: infographicPaths.svgPath },
-      { label: localizeTemplateText('Infographic (PNG)', 'الإنفوجرافيك (PNG)', context.brand.languageMode), path: infographicPaths.pngPath },
-      { label: localizeTemplateText('Infographic (PDF)', 'الإنفوجرافيك (PDF)', context.brand.languageMode), path: infographicPaths.pdfPath },
-      { label: localizeTemplateText('Promo Script', 'النص الترويجي', context.brand.languageMode), path: promoScriptPath },
-      { label: localizeTemplateText('Social Captions', 'التعليقات الإعلامية', context.brand.languageMode), path: captionsPath },
-      { label: localizeTemplateText('User Guide', 'دليل الاستخدام', context.brand.languageMode), path: userGuidePath },
+      { label: 'Main Dossier (PDF)', path: dossierPdfPath },
+      { label: 'Main Dossier (Word)', path: dossierWordPath },
+      { label: 'Project Summary (PPTX)', path: projectPptPath },
+      { label: 'Digital Portfolio (HTML)', path: portfolioHtmlPath },
+      { label: 'Infographic (SVG)', path: infographicPaths.svgPath },
+      { label: 'Infographic (PNG)', path: infographicPaths.pngPath },
+      { label: 'Infographic (PDF)', path: infographicPaths.pdfPath },
+      { label: 'Promo Script (TXT)', path: promoScriptPath },
+      { label: 'Social Captions (TXT)', path: captionsPath },
+      { label: 'User Guide (TXT)', path: userGuidePath },
       ...buildingOutputs,
     ].map(item => ({
       ...item,
@@ -3685,7 +5007,7 @@ router.post('/generate', (req, res, next) => {
 
     await buildExcelManifest(context, dossier, contentModel, generatedDeliverables, outputManifestPath);
     generatedDeliverables.push({
-      label: localizeTemplateText('Generated Outputs Manifest (Excel)', 'فهرس المخرجات الناتجة (Excel)', context.brand.languageMode),
+      label: localizeTemplateText('Generated Outputs Manifest (Excel)', 'فف‡رس المخرجات الناتجة (Excel)', context.brand.languageMode),
       path: outputManifestPath,
       ext: 'xlsx',
       relativePath: toWebPath(path.relative(packageRoot, outputManifestPath)),

@@ -1561,7 +1561,7 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
       type: reportType,
       typeLabel: reportTypeLabel,
       mode: normalizeText(input.reportMode, 'professional'),
-      language: normalizeText(input.language, 'english'),
+      language: normalizeText(input.language, 'arabic').toLowerCase() === 'english' ? 'english' : 'arabic',
       depth: normalizeText(input.depth, 'medium'),
       standardsProfile: normalizeText(input.standardProfile, 'both'),
     },

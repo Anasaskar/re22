@@ -1,0 +1,46 @@
+{
+  "jobId": "0c8b85ac-b6ee-4274-a219-483b901c41a1",
+  "service": 2,
+  "serviceName": "Architectural Rehabilitation Visualization",
+  "serviceDefinition": "Generate high-quality architectural rehabilitation visuals for an existing building based on reference images and project details. The service restores, enhances, or adaptively reuses heritage and traditional buildings while preserving their architectural identity, proportions, facade details, and heritage value. Outputs should be realistic, presentation-ready, architecturally coherent, and clearly connected to the original structure rather than an unrelated redesign.",
+  "model": "google/nano-banana-2",
+  "modelResolution": "1K",
+  "style": "نجدي",
+  "buildingType": "مركز زوار",
+  "area": "221",
+  "floors": 2,
+  "buildingName": "المنشأه التاسعه",
+  "viewsGenerated": 10,
+  "referenceInputs": {
+    "totalFiles": 1,
+    "rasterImages": 1,
+    "documents": 0,
+    "unsupported": 0,
+    "fileNames": [
+      "image_01_restored (2).png"
+    ],
+    "rasterImagePaths": [
+      "C:\\Users\\Dev_Bilal\\re22\\public\\uploads\\1773406070351_image_01_restored (2).png"
+    ]
+  },
+  "floorPlansGenerated": 2,
+  "sectionsGenerated": 1,
+  "styleAnalysis": {
+    "detectedStyle": "Najdi",
+    "confidence": "High",
+    "elements": [
+      "Rectangular massing",
+      "Stone and mud brick materials",
+      "Simple facade rhythm",
+      "Small rectangular openings",
+      "Minimal ornamentation",
+      "Flat roof with parapets"
+    ],
+    "heritageValue": "Represents traditional Najdi architecture, showcasing local materials and construction techniques.",
+    "notes": "The building's simplicity and use of local materials are characteristic of the Najdi style, reflecting the cultural and environmental context of the region.",
+    "reuseGuidance": "Preserve the stone and mud brick facade, maintain the original window sizes and placements, and retain the flat roof with parapets. Adapt interior spaces for visitor center functions while respecting the building's structural integrity."
+  },
+  "gpt4oEnabled": true,
+  "processedAt": "2026-03-13T12:55:08.836Z",
+  "totalTimeSec": "438.5"
+}

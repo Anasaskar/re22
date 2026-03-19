@@ -1,0 +1,21 @@
+{
+  "jobId": "f3b9f803-393e-429d-9e6d-eed6fd325199",
+  "service": 1,
+  "stage": "restoration_complete",
+  "pipeline": "google/nano-banana-2 -> nightmareai/real-esrgan x4",
+  "processedAt": "2026-03-13T12:31:31.476Z",
+  "step1CompletedAt": "2026-03-13T12:31:31.476Z",
+  "upscaleCompleted": false,
+  "imageCount": 1,
+  "prompt": "Carefully restore and clean this historic building while strictly preserving the original structure exactly as it appears in the image. \r\nDo NOT change the camera angle, perspective, framing, or lighting. \r\nDo NOT reconstruct missing parts, invent details, or add any new decorations, ornaments, or architectural elements.\r\n\r\nOnly perform minimal restoration:\r\n- remove temporary construction supports, scaffolding, and maintenance tools\r\n- repair visible cracks and damaged surfaces\r\n- clean dirt, stains, and weathering from walls and materials\r\n- stabilize broken or chipped areas using the same original materials and textures\r\n\r\nMaintain the exact heritage style, authentic materials, and all existing architectural details exactly as in the original photo. \r\nDo not modernize the building and do not add or imagine any elements that are not clearly present in the image.",
+  "images": [
+    {
+      "originalName": "image_01.jpeg",
+      "inputUrl": "/uploads/38ad2234-e7cd-4124-81d8-b5ecfaa23ae2.jpeg",
+      "inputSizeKB": 195,
+      "restoredUrl": "/outputs/f3b9f803-393e-429d-9e6d-eed6fd325199/image_01_restored.png",
+      "restoredJpgUrl": "/outputs/f3b9f803-393e-429d-9e6d-eed6fd325199/image_01_restored.jpg",
+      "restoredTiffUrl": "/outputs/f3b9f803-393e-429d-9e6d-eed6fd325199/image_01_restored.tiff"
+    }
+  ]
+}

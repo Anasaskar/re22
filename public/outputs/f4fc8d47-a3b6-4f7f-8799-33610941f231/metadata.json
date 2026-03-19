@@ -1,0 +1,21 @@
+{
+  "jobId": "f4fc8d47-a3b6-4f7f-8799-33610941f231",
+  "service": 1,
+  "stage": "restoration_complete",
+  "pipeline": "google/nano-banana-2 -> nightmareai/real-esrgan x4",
+  "processedAt": "2026-03-13T12:28:21.696Z",
+  "step1CompletedAt": "2026-03-13T12:28:21.696Z",
+  "upscaleCompleted": false,
+  "imageCount": 1,
+  "prompt": "Carefully restore the historic building in the image. \r\nFix cracks, broken walls, and damaged architectural elements while preserving the exact original design and materials. \r\nRemove scaffolding, construction equipment, and temporary support structures. \r\nKeep the same camera angle, perspective, framing, and lighting exactly as in the original image. \r\nDo not redesign, modernize, or change any architectural style — only realistic heritage restoration.",
+  "images": [
+    {
+      "originalName": "image_01.jpeg",
+      "inputUrl": "/uploads/cfa49222-ad59-4d7e-837d-406750174461.jpeg",
+      "inputSizeKB": 195,
+      "restoredUrl": "/outputs/f4fc8d47-a3b6-4f7f-8799-33610941f231/image_01_restored.png",
+      "restoredJpgUrl": "/outputs/f4fc8d47-a3b6-4f7f-8799-33610941f231/image_01_restored.jpg",
+      "restoredTiffUrl": "/outputs/f4fc8d47-a3b6-4f7f-8799-33610941f231/image_01_restored.tiff"
+    }
+  ]
+}

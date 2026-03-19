@@ -26,6 +26,7 @@
     "pdfkit": "^0.17.2",
     "replicate": "^1.4.0",
     "sharp": "^0.34.5",
+    "three": "^0.165.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

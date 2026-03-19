@@ -48,6 +48,19 @@ const upload = multer({
 });
 
 const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
+const DEFAULT_RESTORATION_PROMPT = `Carefully restore and clean this historic building while strictly preserving the original structure exactly as it appears in the image.
+Do NOT change the camera angle, perspective, framing, or lighting.
+Do NOT reconstruct missing parts, invent details, or add any new decorations, ornaments, or architectural elements.
+
+Only perform minimal restoration:
+- remove temporary construction supports, scaffolding, and maintenance tools
+- repair visible cracks and damaged surfaces
+- clean dirt, stains, and weathering from walls and materials
+- stabilize broken or chipped areas using the same original materials and textures
+
+Maintain the exact heritage style, authentic materials, and all existing architectural details exactly as in the original photo.
+Do not modernize the building and do not add or imagine any elements that are not clearly present in the image.`;
+const REPLICATE_GEMINI_MODEL = process.env.REPLICATE_GEMINI_MODEL || 'google/gemini-2.5-flash';
 
 async function toPngBuffer(filePath) {
   try {
@@ -63,6 +76,57 @@ function toDataURL(buf) {
 
 function relOutputUrl(jobId, filePath) {
   return `/outputs/${jobId}/${path.basename(filePath)}`;
+}
+
+function normalizePromptText(value) {
+  return String(value || '').replace(/\r\n/g, '\n').trim();
+}
+
+function composeService1Prompt(fixedPrompt, enhancedPrompt = '') {
+  const promptParts = [normalizePromptText(fixedPrompt)];
+  const cleanEnhancedPrompt = normalizePromptText(enhancedPrompt);
+
+  if (cleanEnhancedPrompt) {
+    promptParts.push(
+      'Additional restoration guidance derived from the user request:\n' + cleanEnhancedPrompt
+    );
+  }
+
+  return promptParts.filter(Boolean).join('\n\n');
+}
+
+async function enhancePromptWithGemini(sourcePrompt) {
+  const cleanSourcePrompt = normalizePromptText(sourcePrompt);
+
+  if (!cleanSourcePrompt) return '';
+  if (!process.env.REPLICATE_API_TOKEN) {
+    throw new Error('REPLICATE_API_TOKEN is not configured. Add it to .env to use Gemini prompt enhancement through Replicate.');
+  }
+
+  const output = await replicate.run(REPLICATE_GEMINI_MODEL, {
+    input: {
+      prompt: `Enhance this restoration request for a heritage-building image edit prompt:\n\n${cleanSourcePrompt}`,
+      system_instruction: [
+        'You enhance image-edit prompts for heritage building restoration.',
+        'The user may write in Arabic or English.',
+        'Rewrite the request as concise, natural English ready to append to an image restoration prompt.',
+        'Preserve the user intent, but do not add new visual elements, reconstruction, camera changes, lighting changes, or modernization unless the user explicitly asks.',
+        'Keep the result focused on visible materials, damage, cleaning, stabilization, and historically faithful restoration.',
+        'Return only the enhanced prompt text.',
+      ].join(' '),
+      temperature: 0.2,
+      top_p: 0.9,
+      max_output_tokens: 300,
+      thinking_budget: 0,
+    },
+  });
+
+  const enhancedPrompt = normalizePromptText(Array.isArray(output) ? output.join('') : String(output || ''));
+  if (!enhancedPrompt) {
+    throw new Error('Replicate Gemini returned an empty prompt enhancement.');
+  }
+
+  return enhancedPrompt;
 }
 
 function publicPathFromUrl(urlPath) {
@@ -223,6 +287,31 @@ async function buildWordDoc(items, outPath) {
   fs.writeFileSync(outPath, buf);
 }
 
+router.post('/enhance-prompt', express.json(), async (req, res) => {
+  try {
+    const customPrompt = normalizePromptText(req.body && (req.body.customPrompt || req.body.prompt));
+    if (!customPrompt) {
+      return res.status(400).json({ error: 'No Arabic or English prompt was provided.' });
+    }
+
+    const enhancedPrompt = await enhancePromptWithGemini(customPrompt);
+    const finalPrompt = composeService1Prompt(DEFAULT_RESTORATION_PROMPT, enhancedPrompt);
+
+    return res.json({
+      success: true,
+      provider: 'replicate',
+      model: REPLICATE_GEMINI_MODEL,
+      fixedPrompt: DEFAULT_RESTORATION_PROMPT,
+      customPrompt,
+      enhancedPrompt,
+      finalPrompt,
+    });
+  } catch (err) {
+    console.error('[S1/GEMINI] Prompt enhancement failed:', err.message);
+    return res.status(500).json({ error: err.message || 'Prompt enhancement failed.' });
+  }
+});
+
 router.post('/restore', (req, res, next) => {
   upload.array('images', 100)(req, res, err => {
     if (err) return res.status(400).json({ error: err.message });
@@ -262,9 +351,23 @@ router.post('/restore', (req, res, next) => {
     console.log(`Images: ${req.files.length}`);
     console.log('='.repeat(60));
 
-    const userPrompt = (req.body && req.body.prompt && req.body.prompt.trim())
-      ? req.body.prompt.trim()
-      : 'Restore this historic building realistically. Reconstruct missing architectural sections, repair cracks and collapsed walls, preserve the original heritage style, maintain the same camera angle and lighting, keep authentic materials and traditional decorative details, do not modernize the building.';
+    const legacyPrompt = normalizePromptText(req.body && req.body.prompt);
+    const customPrompt = normalizePromptText(req.body && req.body.customPrompt);
+    let fixedPrompt = DEFAULT_RESTORATION_PROMPT;
+    let enhancedPrompt = '';
+    let finalPrompt = DEFAULT_RESTORATION_PROMPT;
+    let promptMode = 'fixed_only';
+
+    if (customPrompt) {
+      console.log(`[S1/GEMINI] Enhancing custom prompt with ${REPLICATE_GEMINI_MODEL} via Replicate...`);
+      enhancedPrompt = await enhancePromptWithGemini(customPrompt);
+      finalPrompt = composeService1Prompt(fixedPrompt, enhancedPrompt);
+      promptMode = 'fixed_plus_gemini';
+    } else if (legacyPrompt) {
+      fixedPrompt = '';
+      finalPrompt = legacyPrompt;
+      promptMode = 'legacy_direct';
+    }
 
     for (const [idx, file] of req.files.entries()) {
       const cleanName = toEnglishDisplayName(file.originalname, idx);
@@ -283,7 +386,7 @@ router.post('/restore', (req, res, next) => {
       try {
         const nbOutput = await replicate.run('google/nano-banana-2', {
           input: {
-            prompt: userPrompt,
+            prompt: finalPrompt,
             image_input: [dataUrl],
             aspect_ratio: 'match_input_image',
             resolution: '1K',
@@ -325,7 +428,15 @@ router.post('/restore', (req, res, next) => {
       step1CompletedAt: nowIso,
       upscaleCompleted: false,
       imageCount: results.length,
-      prompt: userPrompt,
+      prompt: finalPrompt,
+      promptMode,
+      fixedPrompt,
+      customPrompt,
+      enhancedPrompt,
+      promptEnhancer: enhancedPrompt ? {
+        provider: 'replicate',
+        model: REPLICATE_GEMINI_MODEL,
+      } : null,
       images: results.map(result => ({
         originalName: result.originalName,
         inputUrl: `/uploads/${path.basename(result.inputPath)}`,
@@ -364,6 +475,11 @@ router.post('/restore', (req, res, next) => {
       step: 1,
       jobId,
       canUpscale: true,
+      prompt: finalPrompt,
+      fixedPrompt,
+      customPrompt,
+      enhancedPrompt,
+      promptMode,
       outputFiles,
       images: results.map(result => ({
         originalName: result.originalName,

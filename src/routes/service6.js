@@ -4,10 +4,19 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
+
+let Replicate;
+try {
+  Replicate = require('replicate');
+} catch (error) {
+  Replicate = null;
+}
 
 let Document;
 let Packer;
@@ -29,6 +38,10 @@ const Job = (() => {
     return null;
   }
 })();
+
+const { normalizeAiModel, getAiModelLabel } = require('../utils/aiModels');
+const { generateStructuredJson } = require('../utils/aiTextProviders');
+const { parseModelJsonObject } = require('../utils/structuredJson');
 
 const router = express.Router();
 
@@ -52,6 +65,11 @@ const PDF_FONT_SEGOE = 'C:\\Windows\\Fonts\\segoeui.ttf';
 const PDF_FONT_SEGOE_BOLD = 'C:\\Windows\\Fonts\\segoeuib.ttf';
 const PDF_FONT_TAHOMA = 'C:\\Windows\\Fonts\\tahoma.ttf';
 const PDF_FONT_TAHOMA_BOLD = 'C:\\Windows\\Fonts\\tahomabd.ttf';
+const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN || '';
+const SERVICE_06_BOARD_IMAGE_MODEL = process.env.SERVICE_06_BOARD_IMAGE_MODEL
+  || process.env.NANO_BANANA_IMAGE_MODEL
+  || 'google/nano-banana-2:b7866a051519a43b5dda3ee54a3013c4813939a18af2b627f8f1dba876efd443';
+const replicate = Replicate && REPLICATE_API_TOKEN ? new Replicate({ auth: REPLICATE_API_TOKEN }) : null;
 
 [UPLOADS_DIR, OUTPUTS_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
 
@@ -98,6 +116,10 @@ function safeReadJson(filePath, fallback = null) {
 function normalizeText(value, fallback = '') {
   const text = value === undefined || value === null ? '' : String(value).trim();
   return text || fallback;
+}
+
+function parseStructuredAiJson(text) {
+  return parseModelJsonObject(text);
 }
 
 const UTF8_MOJIBAKE_RE = /[\u00C2\u00C3\u00D8\u00D9\u00E2\u00F0]/;
@@ -1219,6 +1241,15 @@ function buildProjectContext(input, linkedJobs, uploadedFilesSummary) {
   const service5 = findFirstJob(linkedJobs, 5);
   const brand = buildBrandProfile(input, uploadedFilesSummary);
   const languageMode = brand.languageMode;
+  const inheritedAiModel = normalizeAiModel(
+    input.aiModel
+      || service4?.metadata?.reportProfile?.aiModel
+      || service4?.metadata?.reportProfile?.aiModelKey
+      || service4?.metadata?.textGeneration?.aiModel
+      || service4?.metadata?.textGeneration?.aiModelKey
+      || 'gpt',
+    'gpt',
+  );
 
   const project = {
     projectName: normalizeText(input.projectName, normalizeText(service4?.metadata?.project?.buildingName) || normalizeText(service5?.metadata?.project?.title) || 'RUAA Heritage Documentation Package'),
@@ -1250,6 +1281,10 @@ function buildProjectContext(input, linkedJobs, uploadedFilesSummary) {
       ),
     },
     brand,
+    ai: {
+      model: inheritedAiModel,
+      modelLabel: getAiModelLabel(inheritedAiModel, 'gpt'),
+    },
   };
 }
 
@@ -1646,6 +1681,182 @@ function buildDossierModel(context, linkedJobs, contentModel) {
   };
 }
 
+const SERVICE_06_NARRATIVE_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['executiveSummary', 'methodology', 'sections', 'buildingRecords', 'appendices', 'promoScript', 'socialCaptions'],
+  properties: {
+    executiveSummary: { type: 'string' },
+    methodology: { type: 'string' },
+    sections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'body'],
+        properties: {
+          id: { type: 'string' },
+          body: { type: 'string' },
+        },
+      },
+    },
+    buildingRecords: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'summary'],
+        properties: {
+          name: { type: 'string' },
+          summary: { type: 'string' },
+        },
+      },
+    },
+    appendices: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    promoScript: { type: 'string' },
+    socialCaptions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+};
+const SERVICE_06_TEXT_MODEL_OVERRIDES = {
+  gpt: process.env.SERVICE_06_OPENAI_MODEL || process.env.OPENAI_REPORT_MODEL || 'openai/gpt-5',
+  gemini: process.env.SERVICE_06_GEMINI_MODEL || process.env.GEMINI_REPORT_MODEL || 'google/gemini-3.1-pro',
+  claude: process.env.SERVICE_06_CLAUDE_MODEL || process.env.CLAUDE_REPORT_MODEL || 'anthropic/claude-4.5-sonnet',
+};
+
+function buildDossierNarrativePromptBundle(context, linkedJobs, contentModel, dossier) {
+  const languageMode = context.brand.languageMode;
+  const languageInstruction = languageMode === 'arabic'
+    ? 'Write all narrative text in Arabic only. Do not switch to English except for unavoidable proper names already supplied in the inputs.'
+    : 'Write all narrative text in English only. Do not include Arabic script in the generated narrative.';
+
+  const contextForModel = {
+    aiModel: context.ai.modelLabel,
+    project: context.project,
+    brand: {
+      projectName: context.brand.projectName,
+      implementingBody: context.brand.implementingBody,
+      preparationDate: context.brand.preparationDate,
+      consultantTeam: context.brand.consultantTeam,
+      languageMode: context.brand.languageMode,
+    },
+    counts: contentModel.counts,
+    linkedSources: linkedJobs.map(job => ({
+      title: neutralizeServiceMentions(job.title, languageMode),
+      service: job.serviceName,
+      jobId: job.jobId,
+    })),
+    buildingRecords: dossier.buildingRecords.map(building => ({
+      name: building.name,
+      summary: building.summary,
+      assetCount: Array.isArray(building.assets) ? building.assets.length : 0,
+    })),
+    sections: dossier.sections.map(section => ({
+      id: section.id,
+      title: section.title,
+      body: section.body,
+    })),
+    appendices: dossier.appendices,
+    notes: context.project.notes,
+  };
+
+  const systemPrompt = [
+    'You are an architectural documentation writer producing polished dossier narrative for client-facing and academic-ready heritage presentation packages.',
+    'Preserve the supplied project identity, building names, locations, and evidence boundaries exactly.',
+    'Do not invent new buildings, dimensions, approvals, or historical claims.',
+    'Do not mention internal service numbers, software workflow details, or implementation internals.',
+    'Improve clarity, cohesion, and professional tone while staying faithful to the supplied draft structure.',
+    languageInstruction,
+    'Return valid JSON only.',
+  ].join(' ');
+
+  const userPrompt = [
+    'Rewrite and enrich the dossier narrative while preserving the existing structure and evidence boundaries.',
+    'The selected AI model must influence executive summary tone, methodology wording, section prose, building summaries, captions, and presentation-supporting narrative.',
+    'Keep the writing concise, professional, and presentation-ready rather than overly academic unless the source context requires it.',
+    'Return only this JSON shape:',
+    JSON.stringify({
+      executiveSummary: 'string',
+      methodology: 'string',
+      sections: [{ id: 'string', body: 'string' }],
+      buildingRecords: [{ name: 'string', summary: 'string' }],
+      appendices: ['string'],
+      promoScript: 'string',
+      socialCaptions: ['string'],
+    }, null, 2),
+    'Source dossier context:',
+    JSON.stringify(contextForModel, null, 2),
+  ].join('\n\n');
+
+  return { systemPrompt, userPrompt };
+}
+
+function applyNarrativeBundleToDossier(dossier, narrativeBundle) {
+  const sectionMap = new Map(
+    (Array.isArray(narrativeBundle?.sections) ? narrativeBundle.sections : [])
+      .map(item => [normalizeText(item?.id).toLowerCase(), item])
+      .filter(([key]) => key)
+  );
+  const buildingMap = new Map(
+    (Array.isArray(narrativeBundle?.buildingRecords) ? narrativeBundle.buildingRecords : [])
+      .map(item => [normalizeText(item?.name).toLowerCase(), item])
+      .filter(([key]) => key)
+  );
+  const appendices = Array.isArray(narrativeBundle?.appendices)
+    ? narrativeBundle.appendices.map(item => normalizeText(item)).filter(Boolean)
+    : [];
+
+  return {
+    ...dossier,
+    executiveSummary: normalizeMultiline(narrativeBundle?.executiveSummary, dossier.executiveSummary),
+    methodology: normalizeMultiline(narrativeBundle?.methodology, dossier.methodology),
+    sections: dossier.sections.map(section => {
+      const override = sectionMap.get(normalizeText(section.id).toLowerCase());
+      return {
+        ...section,
+        body: normalizeMultiline(override?.body, section.body),
+      };
+    }),
+    buildingRecords: dossier.buildingRecords.map(building => {
+      const override = buildingMap.get(normalizeText(building.name).toLowerCase());
+      return {
+        ...building,
+        summary: normalizeMultiline(override?.summary, building.summary),
+      };
+    }),
+    appendices: appendices.length ? appendices : dossier.appendices,
+  };
+}
+
+async function synthesizeDossierNarrative(context, linkedJobs, contentModel, dossier) {
+  const { systemPrompt, userPrompt } = buildDossierNarrativePromptBundle(context, linkedJobs, contentModel, dossier);
+  const result = await generateStructuredJson({
+    aiModel: context.ai.model,
+    systemPrompt,
+    userPrompt,
+    parseJson: parseStructuredAiJson,
+    modelOverrides: SERVICE_06_TEXT_MODEL_OVERRIDES,
+    temperature: 0.3,
+    maxTokens: 5000,
+    timeoutMs: 180000,
+    jsonSchema: SERVICE_06_NARRATIVE_JSON_SCHEMA,
+  });
+
+  return {
+    selectedModel: context.ai.model,
+    selectedLabel: context.ai.modelLabel,
+    provider: result.provider,
+    model: result.model,
+    narrative: result.json,
+    warnings: [],
+  };
+}
+
 function buildReadmeText(context, dossier, outputFiles, packageRootName) {
   const lines = [
     `${context.brand.projectName}`,
@@ -1669,7 +1880,7 @@ function buildReadmeText(context, dossier, outputFiles, packageRootName) {
     localizeTemplateText('- 02_Plans: floor plans, urban plans, vector drawings, and printable sheets', '- 02_Plans: مخططات طوابف‚ ومخططات عمرانية ورسومات متجف‡ية ولوحات ف‚ابلة للطباعة', context.brand.languageMode),
     localizeTemplateText('- 03_3D_Models: print-ready and viewing-ready model exports', '- 03_3D_Models: مخرجات نماذج ثلاثية الأبعاد جاف‡زة للعرض والطباعة', context.brand.languageMode),
     localizeTemplateText('- 04_Reports: narrative reports, spreadsheets, metadata, and documentation tables', '- 04_Reports: تف‚ارير سردية وجداول بيانات وبيانات وصفية وجداول توثيف‚ية', context.brand.languageMode),
-    localizeTemplateText('- 05_Presentations: presentation decks and slide-ready summaries', '- 05_Presentations: عروض تف‚ديمية وملخصات جاف‡زة للشرائح', context.brand.languageMode),
+    localizeTemplateText('- 05_Presentations: presentation decks and board-style composition sheets', '- 05_Presentations: عروض تف‚ديمية ولوحات تركيبية بأسلوب معماري', context.brand.languageMode),
     localizeTemplateText('- 06_Dossier: comprehensive dossier and building-level documentation', '- 06_Dossier: الوثيف‚ة الشاملة وتوثيف‚ المباني', context.brand.languageMode),
     localizeTemplateText('- 07_Digital_Portfolio: standalone HTML delivery and portfolio assets', '- 07_Digital_Portfolio: موف‚ع HTML مستف‚ل وأصول المحفظة الرف‚مية', context.brand.languageMode),
     localizeTemplateText('- 08_Media: infographic and promotional media support files', '- 08_Media: ملفات الإنفوجرافيفƒ والمواد الإعلامية المساندة', context.brand.languageMode),
@@ -1677,7 +1888,7 @@ function buildReadmeText(context, dossier, outputFiles, packageRootName) {
     localizeTemplateText('Usage guidance:', 'إرشادات الاستخدام:', context.brand.languageMode),
     localizeTemplateText('- Open PDF files for print-ready review.', '- افتح ملفات PDF للمراجعة والطباعة.', context.brand.languageMode),
     localizeTemplateText('- Edit DOCX files when narrative customization is needed.', '- حرر ملفات DOCX عند الحاجة إلف‰ تخصيص السرد أو التنسيف‚.', context.brand.languageMode),
-    localizeTemplateText('- Open PPTX files for decision-maker presentations.', '- افتح ملفات PPTX للعروض الموجف‡ة لأصحاب الف‚رار.', context.brand.languageMode),
+    localizeTemplateText('- Open PPTX files and board sheets for decision-maker presentations.', '- افتح ملفات PPTX ولوحات العرض للعروض الموجف‡ة لأصحاب الف‚رار.', context.brand.languageMode),
     localizeTemplateText('- Open 07_Digital_Portfolio/HTML_Website/index.html in a browser for the portfolio view.', '- افتح 07_Digital_Portfolio/HTML_Website/index.html في المتصفح لعرض المحفظة الرف‚مية.', context.brand.languageMode),
     localizeTemplateText('- Use the Excel manifest to review specifications and generated outputs.', '- استخدم ملف Excel لمراجعة المواصفات والمخرجات الناتجة.', context.brand.languageMode),
   ];
@@ -2480,7 +2691,9 @@ async function buildInfographics(context, contentModel, dossier, mediaDir) {
   return { svgPath, pngPath, pdfPath };
 }
 
-function buildPromoScript(context, dossier, contentModel) {
+function buildPromoScript(context, dossier, contentModel, narrativeBundle = null) {
+  const aiDraft = normalizeMultiline(narrativeBundle?.promoScript, '');
+  if (aiDraft) return aiDraft;
   return [
     localizeTemplateText(`Project: ${context.brand.projectName}`, `المشروع: ${context.brand.projectName}`, context.brand.languageMode),
     localizeTemplateText(`Style direction: ${context.project.brandingPreferences}`, `توجف‡ الف‡وية: ${context.project.brandingPreferences}`, context.brand.languageMode),
@@ -2502,7 +2715,11 @@ function buildPromoScript(context, dossier, contentModel) {
   ].join('\n');
 }
 
-function buildSocialCaptions(context, contentModel) {
+function buildSocialCaptions(context, contentModel, narrativeBundle = null) {
+  const aiCaptions = Array.isArray(narrativeBundle?.socialCaptions)
+    ? narrativeBundle.socialCaptions.map(item => normalizeText(item)).filter(Boolean)
+    : [];
+  if (aiCaptions.length) return aiCaptions.join('\n\n');
   return [
     localizeTemplateText(
       `Caption 1: ${context.brand.projectName} now includes a complete documentation and media package integrating restored imagery, heritage analysis, plans, reports, and 3D assets.`,
@@ -2814,6 +3031,936 @@ function getOrderedServiceDossierChapters(assetGroups = {}, languageMode = 'engl
       fileAssets,
     };
   }).filter(Boolean);
+}
+
+function parseBooleanLike(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const normalized = normalizeText(value).toLowerCase();
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false;
+  return fallback;
+}
+
+function fileToDataUri(filePath) {
+  const ext = fileExt(filePath);
+  const mime = ext === '.png'
+    ? 'image/png'
+    : ext === '.webp'
+      ? 'image/webp'
+      : 'image/jpeg';
+  return `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
+}
+
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const proto = String(url || '').startsWith('https') ? https : http;
+    const file = fs.createWriteStream(dest);
+
+    proto.get(url, res => {
+      if (res.statusCode && res.statusCode >= 400) {
+        file.close(() => fs.unlink(dest, () => {}));
+        return reject(new Error(`Download failed (${res.statusCode}) for ${url}`));
+      }
+
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', error => {
+      file.close(() => fs.unlink(dest, () => {}));
+      reject(error);
+    });
+  });
+}
+
+function collectHttpUrls(value, urls = []) {
+  if (!value) return urls;
+  if (typeof value === 'string') {
+    if (/^https?:\/\//i.test(value)) urls.push(value);
+    return urls;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectHttpUrls(item, urls));
+    return urls;
+  }
+  if (typeof value === 'object') {
+    if (typeof value.url === 'function') {
+      try {
+        const produced = value.url();
+        if (/^https?:\/\//i.test(produced)) urls.push(produced);
+      } catch (error) {
+        // Best-effort extraction only.
+      }
+    }
+    const asString = String(value);
+    if (/^https?:\/\//i.test(asString)) urls.push(asString);
+    Object.values(value).forEach(item => collectHttpUrls(item, urls));
+  }
+  return urls;
+}
+
+function cleanPresentationLabel(value, fallback = 'Visual') {
+  const text = normalizeText(value, fallback)
+    .replace(path.extname(value || ''), '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return fallback;
+  return text
+    .split(' ')
+    .map(token => token ? `${token.charAt(0).toUpperCase()}${token.slice(1)}` : token)
+    .join(' ');
+}
+
+function presentationAssetHaystack(asset = {}) {
+  return [
+    asset.name,
+    asset.title,
+    asset.building,
+    asset.district,
+    asset.relativePath,
+    asset.path,
+    asset.type,
+    asset.usage,
+  ].map(part => String(part || '').toLowerCase()).join(' ');
+}
+
+function classifyPresentationRoles(asset = {}) {
+  const haystack = presentationAssetHaystack(asset);
+  const roles = new Set();
+
+  if (asset.service === 1) roles.add('restoration');
+  if (asset.service === 3 || asset.type === 'map-data') roles.add('site');
+  if (asset.service === 5) roles.add('three-dimensional');
+  if (asset.type === 'drawing' || asset.usage === 'technical-drawing') roles.add('technical');
+  if (asset.type === 'image') roles.add('visual');
+
+  if (/before[_ -]?after|condition|restored|restoration/.test(haystack)) roles.add('restoration');
+  if (/hero|overview|main|primary|cover/.test(haystack)) roles.add('hero');
+  if (/floor ?plan|plan\b|roof plan|ground floor|layout/.test(haystack)) roles.add('plan');
+  if (/site plan|master plan|masterplan|urban|district|map|geo|context/.test(haystack)) roles.add('site');
+  if (/section|sectional|cut/.test(haystack)) roles.add('section');
+  if (/elevation|facade|fa[çc]ade/.test(haystack)) roles.add('elevation');
+  if (/function|functional|program|zoning/.test(haystack)) roles.add('functional');
+  if (/circulation|access|movement|entry|route/.test(haystack)) roles.add('circulation');
+  if (/landscape|plant|green|courtyard|open space/.test(haystack)) roles.add('landscape');
+  if (/aerial|bird|birds eye|bird's eye|rooftop/.test(haystack)) roles.add('aerial');
+  if (/night|evening|sunset|dusk/.test(haystack)) roles.add('night');
+  if (/detail|close ?up|material|texture/.test(haystack)) roles.add('detail');
+  if (/street|pedestrian|eye level|human scale/.test(haystack)) roles.add('eye-level');
+  if (/diagram|analysis|scheme/.test(haystack)) roles.add('diagram');
+  if (/render|perspective|view|visualization|visualisation/.test(haystack) || asset.service === 5) roles.add('perspective');
+
+  if (!roles.has('hero') && (roles.has('perspective') || roles.has('visual'))) roles.add('hero-candidate');
+  if (!roles.size && asset.type === 'image') roles.add('hero-candidate');
+
+  return [...roles];
+}
+
+function isRenderablePresentationAsset(asset = {}) {
+  const assetPath = asset.copiedPath || asset.path;
+  const ext = fileExt(assetPath);
+  if (!assetPath || !fs.existsSync(assetPath)) return false;
+  return isImageExtension(ext) || ext === '.svg';
+}
+
+function buildPresentationAssetIndex(assets = []) {
+  const renderable = uniqueAssets((assets || []).filter(isRenderablePresentationAsset))
+    .map(asset => ({ ...asset, roles: classifyPresentationRoles(asset) }));
+  const withRole = role => renderable.filter(asset => asset.roles.includes(role));
+
+  return {
+    all: renderable,
+    hero: uniqueAssets([...withRole('hero'), ...withRole('hero-candidate'), ...withRole('perspective'), ...withRole('visual')]),
+    restoration: uniqueAssets([...withRole('restoration')]),
+    plans: uniqueAssets([...withRole('plan')]),
+    elevations: uniqueAssets([...withRole('elevation')]),
+    sections: uniqueAssets([...withRole('section')]),
+    site: uniqueAssets([...withRole('site'), ...withRole('aerial')]),
+    functional: uniqueAssets([...withRole('functional')]),
+    circulation: uniqueAssets([...withRole('circulation')]),
+    landscape: uniqueAssets([...withRole('landscape')]),
+    aerial: uniqueAssets([...withRole('aerial')]),
+    night: uniqueAssets([...withRole('night')]),
+    detail: uniqueAssets([...withRole('detail')]),
+    diagram: uniqueAssets([...withRole('diagram')]),
+    perspectives: uniqueAssets([...withRole('perspective'), ...withRole('eye-level'), ...withRole('hero-candidate')]),
+    technical: uniqueAssets([...withRole('technical'), ...withRole('plan'), ...withRole('elevation'), ...withRole('section')]),
+  };
+}
+
+function pickPresentationAssets(primary = [], fallback = [], count = 1) {
+  const selected = [];
+  const seen = new Set();
+
+  for (const list of [primary || [], fallback || []]) {
+    for (const asset of list) {
+      const key = assetRecordKey(asset);
+      if (!key || seen.has(key)) continue;
+      selected.push(asset);
+      seen.add(key);
+      if (selected.length >= count) return selected;
+    }
+  }
+
+  return selected;
+}
+
+function cyclePresentationAsset(assets = [], index = 0) {
+  if (!assets.length) return null;
+  return assets[index % assets.length];
+}
+
+function wrapSvgText(text, maxChars = 42, maxLines = 2) {
+  const normalized = compactText(text, maxChars * maxLines + 20);
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = '';
+
+  words.forEach(word => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || !current) {
+      current = candidate;
+      return;
+    }
+    lines.push(current);
+    current = word;
+  });
+
+  if (current) lines.push(current);
+  const sliced = lines.slice(0, maxLines);
+  if (lines.length > maxLines) {
+    const last = sliced[maxLines - 1] || '';
+    sliced[maxLines - 1] = compactText(last, Math.max(6, maxChars - 3));
+  }
+  return sliced.length ? sliced : [''];
+}
+
+function svgTextBlock(x, y, text, options = {}) {
+  const lines = wrapSvgText(text, options.maxChars || 44, options.maxLines || 2);
+  const fontSize = options.fontSize || 20;
+  const lineHeight = options.lineHeight || Math.round(fontSize * 1.25);
+  const fill = options.fill || '#0f172a';
+  const fontWeight = options.fontWeight || 500;
+  const anchor = options.anchor || 'start';
+  const family = xmlEscape(options.fontFamily || 'Segoe UI, Arial, sans-serif');
+
+  return `<text x="${x}" y="${y}" fill="${fill}" font-family="${family}" font-size="${fontSize}" font-weight="${fontWeight}" text-anchor="${anchor}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${xmlEscape(line)}</tspan>`).join('')}</text>`;
+}
+
+function createSvgBuffer(width, height, body) {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`,
+    'utf8',
+  );
+}
+
+function presentationTileCaption(asset = {}) {
+  asset = asset || {};
+  const assetLabel = cleanPresentationLabel(asset.name, 'Visual');
+  const buildingLabel = normalizeText(asset.building);
+  if (!buildingLabel || buildingLabel === 'Project-wide') return assetLabel;
+  return compactText(`${assetLabel} - ${buildingLabel}`, 58);
+}
+
+async function renderPresentationTile(asset, width, height, outDir, options = {}) {
+  const captionHeight = options.captionHeight ?? 68;
+  const padding = options.padding ?? 18;
+  const innerWidth = Math.max(1, width - (padding * 2));
+  const innerHeight = Math.max(1, height - (padding * 2) - captionHeight);
+  const assetPath = await resolveRenderableImagePath(asset.copiedPath || asset.path, outDir, {
+    forcePng: true,
+    suffix: `board_${slugify(asset.name, 'asset')}`,
+  });
+  const fit = options.fit || (asset.roles?.some(role => ['plan', 'site', 'section', 'elevation', 'technical', 'diagram'].includes(role)) ? 'contain' : 'cover');
+  const imageBuffer = await sharp(assetPath)
+    .resize({
+      width: innerWidth,
+      height: innerHeight,
+      fit,
+      position: fit === 'cover' ? 'attention' : 'center',
+      background: '#ffffff',
+    })
+    .flatten({ background: '#ffffff' })
+    .png()
+    .toBuffer();
+
+  const panelSvg = createSvgBuffer(width, height, `
+    <rect x="0" y="0" width="${width}" height="${height}" rx="26" fill="#ffffff"/>
+    <rect x="0.75" y="0.75" width="${width - 1.5}" height="${height - 1.5}" rx="26" fill="none" stroke="#d6d3d1" stroke-width="1.5"/>
+    <rect x="${padding}" y="${height - captionHeight - padding}" width="${innerWidth}" height="${captionHeight}" rx="18" fill="#fafaf9"/>
+    <rect x="0" y="0" width="${width}" height="${height}" rx="26" fill="none" stroke="#e7e5e4" stroke-width="2"/>
+  `);
+
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: '#ffffff',
+    },
+  })
+    .composite([
+      { input: panelSvg, left: 0, top: 0 },
+      { input: imageBuffer, left: padding, top: padding },
+    ])
+    .png()
+    .toBuffer();
+}
+
+function buildPresentationBoardTypography(spec = {}, context = {}, width = 1920, height = 1080) {
+  const fontFamily = fontFamilyStack(context.brand?.typography, context.brand?.languageMode);
+  const accent = spec.accentColor || context.brand?.primaryColor || '#1a3554';
+  const eyebrow = normalizeText(spec.eyebrow);
+  const title = normalizeText(spec.title);
+  const subtitle = normalizeText(spec.subtitle);
+  const footer = normalizeText(spec.footer);
+  const captionBlocks = (spec.placements || []).map(item => {
+    const caption = normalizeText(item.caption || presentationTileCaption(item.asset));
+    if (!caption) return '';
+    return svgTextBlock(item.x + 20, item.y + item.h - 30, caption, {
+      fontSize: 18,
+      maxChars: Math.max(18, Math.floor((item.w - 40) / 12)),
+      maxLines: 2,
+      fill: '#334155',
+      fontWeight: 500,
+      fontFamily,
+    });
+  }).join('');
+
+  return createSvgBuffer(width, height, `
+    <defs>
+      <linearGradient id="boardAccent" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0%" stop-color="${accent}"/>
+        <stop offset="100%" stop-color="#d6a95d"/>
+      </linearGradient>
+    </defs>
+    <rect x="72" y="72" width="${width - 144}" height="${height - 144}" rx="34" fill="none" stroke="#e7e5e4" stroke-width="1.5"/>
+    <rect x="72" y="72" width="240" height="8" rx="4" fill="url(#boardAccent)"/>
+    ${eyebrow ? svgTextBlock(84, 118, eyebrow, { fontSize: 22, fontWeight: 600, fill: accent, maxChars: 28, maxLines: 1, fontFamily }) : ''}
+    ${title ? svgTextBlock(84, 170, title, { fontSize: 42, fontWeight: 700, fill: '#0f172a', maxChars: 40, maxLines: 2, fontFamily }) : ''}
+    ${subtitle ? svgTextBlock(84, 236, subtitle, { fontSize: 22, fontWeight: 400, fill: '#475569', maxChars: 72, maxLines: 2, fontFamily }) : ''}
+    ${footer ? svgTextBlock(width - 84, height - 42, footer, { fontSize: 16, fontWeight: 500, fill: '#64748b', anchor: 'end', maxChars: 80, maxLines: 1, fontFamily }) : ''}
+    ${captionBlocks}
+  `);
+}
+
+async function refinePresentationBoardWithNanoBanana(basePath, referenceAssets, outPath, spec = {}) {
+  if (!replicate) return null;
+  if (!fs.existsSync(basePath)) return null;
+
+  const tempDir = path.join(path.dirname(outPath), '_nano_banana_tmp');
+  ensureDir(tempDir);
+
+  const prepareNanoBananaInputImage = async (filePath, label, maxWidth = 1400, maxHeight = 1400) => {
+    const renderPath = await resolveRenderableImagePath(filePath, tempDir, {
+      forcePng: true,
+      suffix: `nb_${slugify(label, 'img')}`,
+    });
+    if (!renderPath || !fs.existsSync(renderPath)) return null;
+    const preparedPath = path.join(tempDir, `${slugify(label, 'img')}_prepared.jpg`);
+    await sharp(renderPath)
+      .flatten({ background: '#ffffff' })
+      .resize(maxWidth, maxHeight, { fit: 'inside', withoutEnlargement: true, background: '#ffffff' })
+      .jpeg({ quality: 86, chromaSubsampling: '4:4:4' })
+      .toFile(preparedPath);
+    return preparedPath;
+  };
+
+  const sanitizedBase = await prepareNanoBananaInputImage(basePath, `${normalizeText(spec.title, 'board')}_base`, 1536, 1536);
+  if (!sanitizedBase) return null;
+
+  const sanitizedRefs = [];
+  for (const asset of uniqueAssets((referenceAssets || []).filter(Boolean))) {
+    const sourcePath = asset.copiedPath || asset.path;
+    if (!sourcePath || !fs.existsSync(sourcePath)) continue;
+    const prepared = await prepareNanoBananaInputImage(sourcePath, asset.name || path.basename(sourcePath), 1200, 1200);
+    if (prepared && !sanitizedRefs.includes(prepared)) sanitizedRefs.push(prepared);
+    if (sanitizedRefs.length >= 3) break;
+  }
+
+  const prompt = compactText([
+    'Refine this architecture presentation board into a premium competition-style review sheet.',
+    `Primary subject: ${normalizeText(spec.title, 'Architectural presentation board')}.`,
+    'Preserve the exact building identity, massing, materials, and viewpoints from the references.',
+    'Do not redesign the project, invent unrelated buildings, or disturb the board layout.',
+    'Keep a clean neutral sheet background, elegant image panels, and coherent visual harmony.',
+  ].join(' '), 900);
+
+  const attempts = [
+    [sanitizedBase, ...sanitizedRefs.slice(0, 2)],
+    [sanitizedBase, ...sanitizedRefs.slice(0, 1)],
+    [sanitizedBase],
+  ].filter(paths => paths.length);
+
+  let lastError = null;
+  for (const paths of attempts) {
+    try {
+      const input = {
+        prompt,
+        image_input: paths.map(fileToDataUri),
+        output_format: 'png',
+        aspect_ratio: '16:9',
+        resolution: '1K',
+        number_of_images: 1,
+      };
+
+      const output = await replicate.run(SERVICE_06_BOARD_IMAGE_MODEL, { input });
+      const outputUrls = [...new Set(collectHttpUrls(output))];
+      const imageUrl = outputUrls.find(url => /\.(png|jpe?g|webp)(\?|$)/i.test(url)) || outputUrls[0];
+      if (!imageUrl) throw new Error('Replicate Nano Banana output was empty.');
+
+      const tempPath = `${outPath}.download`;
+      await downloadFile(imageUrl, tempPath);
+      await sharp(tempPath)
+        .resize(1920, 1080, { fit: 'cover', position: 'attention' })
+        .png()
+        .toFile(outPath);
+      fs.unlinkSync(tempPath);
+      return outPath;
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || '');
+      const recoverable = /invalid input|E006|ReadTimeout|timeout/i.test(message);
+      if (!recoverable) break;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return null;
+}
+
+async function buildPresentationBoardImage(spec, outPath, context, options = {}) {
+  const width = 1920;
+  const height = 1080;
+  ensureDir(path.dirname(outPath));
+  const tempDir = path.join(path.dirname(outPath), '_board_tmp');
+  ensureDir(tempDir);
+
+  const baseComposites = [];
+  for (const placement of spec.placements || []) {
+    if (!placement.asset) continue;
+    const tileBuffer = await renderPresentationTile(placement.asset, placement.w, placement.h, tempDir, {
+      fit: placement.fit,
+      captionHeight: placement.captionHeight,
+    });
+    baseComposites.push({ input: tileBuffer, left: placement.x, top: placement.y });
+  }
+
+  const backgroundSvg = createSvgBuffer(width, height, `
+    <defs>
+      <linearGradient id="bgWash" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#fcfbf8"/>
+        <stop offset="100%" stop-color="#f3f1ec"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#bgWash)"/>
+    <circle cx="1670" cy="190" r="280" fill="#f5efe5"/>
+    <circle cx="240" cy="970" r="240" fill="#f1ede5"/>
+  `);
+
+  const baseBuffer = await sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: '#fafaf9',
+    },
+  })
+    .composite([
+      { input: backgroundSvg, left: 0, top: 0 },
+      ...baseComposites,
+    ])
+    .png()
+    .toBuffer();
+
+  const basePath = path.join(tempDir, `${slugify(spec.title, 'board')}_base.png`);
+  fs.writeFileSync(basePath, baseBuffer);
+
+  let refinedSourcePath = basePath;
+  if (parseBooleanLike(options.enableNanoBanana, true) && spec.enableRefine !== false) {
+    try {
+      const refinedPath = path.join(tempDir, `${slugify(spec.title, 'board')}_refined.png`);
+      const result = await refinePresentationBoardWithNanoBanana(basePath, (spec.placements || []).map(item => item.asset), refinedPath, spec);
+      if (result && fs.existsSync(result)) refinedSourcePath = result;
+    } catch (error) {
+      refinedSourcePath = basePath;
+    }
+  }
+
+  const finalTypography = buildPresentationBoardTypography(spec, context, width, height);
+  await sharp(refinedSourcePath)
+    .composite([{ input: finalTypography, left: 0, top: 0 }])
+    .png()
+    .toFile(outPath);
+  return outPath;
+}
+
+async function buildCoverPresentationBoard(subject, index, context, outPath) {
+  const width = 1920;
+  const height = 1080;
+  ensureDir(path.dirname(outPath));
+  const tempDir = path.join(path.dirname(outPath), '_board_tmp');
+  ensureDir(tempDir);
+  const heroAsset = cyclePresentationAsset(index.hero.length ? index.hero : index.all, 0);
+  const heroPath = heroAsset
+    ? await resolveRenderableImagePath(heroAsset.copiedPath || heroAsset.path, tempDir, {
+      forcePng: true,
+      suffix: `cover_${slugify(subject.name, 'subject')}`,
+    })
+    : null;
+  const heroBuffer = heroPath && fs.existsSync(heroPath)
+    ? await sharp(heroPath)
+      .resize({ width, height, fit: 'cover', position: 'attention' })
+      .png()
+      .toBuffer()
+    : await sharp({
+      create: { width, height, channels: 4, background: '#e7e5e4' },
+    }).png().toBuffer();
+  const fontFamily = fontFamilyStack(context.brand?.typography, context.brand?.languageMode);
+  const accent = context.brand?.primaryColor || '#1a3554';
+  const overlay = createSvgBuffer(width, height, `
+    <defs>
+      <linearGradient id="coverShade" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="rgba(15,23,42,0.82)"/>
+        <stop offset="50%" stop-color="rgba(15,23,42,0.52)"/>
+        <stop offset="100%" stop-color="rgba(15,23,42,0.18)"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#coverShade)"/>
+    <rect x="82" y="92" width="280" height="8" rx="4" fill="${accent}"/>
+    ${svgTextBlock(92, 154, labelForLanguage('Architectural Presentation Package', 'حزمة عرض معمارية', context.brand.languageMode), {
+      fontSize: 24,
+      maxChars: 34,
+      maxLines: 2,
+      fill: '#f8fafc',
+      fontWeight: 600,
+      fontFamily,
+    })}
+    ${svgTextBlock(92, 260, subject.name, {
+      fontSize: 56,
+      maxChars: 24,
+      maxLines: 2,
+      fill: '#ffffff',
+      fontWeight: 700,
+      fontFamily,
+    })}
+    ${svgTextBlock(92, 390, subject.summary, {
+      fontSize: 24,
+      maxChars: 58,
+      maxLines: 3,
+      fill: '#e2e8f0',
+      fontWeight: 400,
+      fontFamily,
+    })}
+    ${svgTextBlock(92, 980, `${context.brand.projectName}   |   ${context.brand.preparationDate}`, {
+      fontSize: 18,
+      maxChars: 72,
+      maxLines: 1,
+      fill: '#e2e8f0',
+      fontWeight: 500,
+      fontFamily,
+    })}
+  `);
+  await sharp(heroBuffer).composite([{ input: overlay, left: 0, top: 0 }]).png().toFile(outPath);
+  return outPath;
+}
+
+async function buildSummaryPresentationBoard(subject, index, context, outPath, summaryOptions = {}) {
+  const width = 1920;
+  const height = 1080;
+  ensureDir(path.dirname(outPath));
+  const tempDir = path.join(path.dirname(outPath), '_board_tmp');
+  ensureDir(tempDir);
+  const primaryAsset = cyclePresentationAsset(index.hero.length ? index.hero : index.all, 0);
+  const secondaryAsset = cyclePresentationAsset(index.site.length ? index.site : index.perspectives.length ? index.perspectives : index.all, 1);
+  const composites = [];
+
+  if (primaryAsset) {
+    const tile = await renderPresentationTile(primaryAsset, 930, 530, tempDir, { fit: 'cover' });
+    composites.push({ input: tile, left: 900, top: 160 });
+  }
+  if (secondaryAsset) {
+    const tile = await renderPresentationTile(secondaryAsset, 930, 250, tempDir, { fit: 'contain' });
+    composites.push({ input: tile, left: 900, top: 730 });
+  }
+
+  const metrics = summaryOptions.metrics || [];
+  const notes = (summaryOptions.notes || []).slice(0, 4);
+  const fontFamily = fontFamilyStack(context.brand?.typography, context.brand?.languageMode);
+  const accent = context.brand?.primaryColor || '#1a3554';
+  const metricsSvg = metrics.map((metric, indexMetric) => {
+    const y = 394 + (indexMetric * 136);
+    return `
+      <rect x="84" y="${y}" width="706" height="104" rx="26" fill="#ffffff" stroke="#e7e5e4"/>
+      ${svgTextBlock(124, y + 46, String(metric.value), {
+        fontSize: 34,
+        maxChars: 14,
+        maxLines: 1,
+        fill: accent,
+        fontWeight: 700,
+        fontFamily,
+      })}
+      ${svgTextBlock(124, y + 80, String(metric.label), {
+        fontSize: 18,
+        maxChars: 42,
+        maxLines: 2,
+        fill: '#475569',
+        fontWeight: 500,
+        fontFamily,
+      })}
+    `;
+  }).join('');
+
+  const notesSvg = notes.map((note, indexNote) => {
+    const y = 196 + (indexNote * 62);
+    return `
+      <circle cx="102" cy="${y - 8}" r="6" fill="${accent}"/>
+      ${svgTextBlock(124, y, note, {
+        fontSize: 22,
+        maxChars: 44,
+        maxLines: 2,
+        fill: '#334155',
+        fontWeight: 400,
+        fontFamily,
+      })}
+    `;
+  }).join('');
+
+  const overlay = createSvgBuffer(width, height, `
+    <defs>
+      <linearGradient id="sumBg" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#fcfbf8"/>
+        <stop offset="100%" stop-color="#f3f1ec"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#sumBg)"/>
+    <rect x="84" y="90" width="240" height="8" rx="4" fill="${accent}"/>
+    ${svgTextBlock(84, 148, summaryOptions.eyebrow || labelForLanguage('Project Snapshot', 'لقطة المشروع', context.brand.languageMode), {
+      fontSize: 22,
+      maxChars: 28,
+      maxLines: 1,
+      fill: accent,
+      fontWeight: 600,
+      fontFamily,
+    })}
+    ${svgTextBlock(84, 222, summaryOptions.title || subject.name, {
+      fontSize: 44,
+      maxChars: 28,
+      maxLines: 2,
+      fill: '#0f172a',
+      fontWeight: 700,
+      fontFamily,
+    })}
+    ${svgTextBlock(84, 318, summaryOptions.subtitle || subject.summary, {
+      fontSize: 22,
+      maxChars: 46,
+      maxLines: 3,
+      fill: '#475569',
+      fontWeight: 400,
+      fontFamily,
+    })}
+    ${notesSvg}
+    ${metricsSvg}
+    ${svgTextBlock(width - 84, height - 42, summaryOptions.footer || context.brand.projectName, {
+      fontSize: 16,
+      maxChars: 72,
+      maxLines: 1,
+      fill: '#64748b',
+      fontWeight: 500,
+      anchor: 'end',
+      fontFamily,
+    })}
+  `);
+
+  await sharp({
+    create: { width, height, channels: 4, background: '#fafaf9' },
+  }).composite([
+    { input: overlay, left: 0, top: 0 },
+    ...composites,
+  ]).png().toFile(outPath);
+  return outPath;
+}
+
+function buildBoardLayout(layoutName, assets = []) {
+  const pool = assets.length ? assets : [null];
+  const assetAt = index => cyclePresentationAsset(pool, index);
+  const standardCaption = asset => (asset ? presentationTileCaption(asset) : '');
+
+  if (layoutName === 'technical-sheet') {
+    return [
+      { x: 84, y: 250, w: 836, h: 396, fit: 'contain', asset: assetAt(0), caption: standardCaption(assetAt(0)) },
+      { x: 964, y: 250, w: 872, h: 396, fit: 'contain', asset: assetAt(1), caption: standardCaption(assetAt(1)) },
+      { x: 84, y: 688, w: 568, h: 284, fit: 'contain', asset: assetAt(2), caption: standardCaption(assetAt(2)) },
+      { x: 676, y: 688, w: 568, h: 284, fit: 'contain', asset: assetAt(3), caption: standardCaption(assetAt(3)) },
+      { x: 1268, y: 688, w: 568, h: 284, fit: 'cover', asset: assetAt(4), caption: standardCaption(assetAt(4)) },
+    ].filter(item => item.asset);
+  }
+
+  if (layoutName === 'analysis-sheet') {
+    return [
+      { x: 84, y: 226, w: 568, h: 246, fit: 'contain', asset: assetAt(0), caption: standardCaption(assetAt(0)) },
+      { x: 676, y: 226, w: 568, h: 246, fit: 'contain', asset: assetAt(1), caption: standardCaption(assetAt(1)) },
+      { x: 1268, y: 226, w: 568, h: 246, fit: 'contain', asset: assetAt(2), caption: standardCaption(assetAt(2)) },
+      { x: 84, y: 514, w: 1150, h: 458, fit: 'contain', asset: assetAt(3), caption: standardCaption(assetAt(3)) },
+      { x: 1268, y: 514, w: 568, h: 458, fit: 'cover', asset: assetAt(4), caption: standardCaption(assetAt(4)) },
+    ].filter(item => item.asset);
+  }
+
+  if (layoutName === 'diptych') {
+    return [
+      { x: 84, y: 248, w: 872, h: 724, fit: 'cover', asset: assetAt(0), caption: standardCaption(assetAt(0)) },
+      { x: 964, y: 248, w: 872, h: 724, fit: 'cover', asset: assetAt(1), caption: standardCaption(assetAt(1)) },
+    ].filter(item => item.asset);
+  }
+
+  if (layoutName === 'gallery-sheet') {
+    return [
+      { x: 84, y: 242, w: 1752, h: 386, fit: 'cover', asset: assetAt(0), caption: standardCaption(assetAt(0)) },
+      { x: 84, y: 662, w: 426, h: 310, fit: 'cover', asset: assetAt(1), caption: standardCaption(assetAt(1)) },
+      { x: 534, y: 662, w: 426, h: 310, fit: 'cover', asset: assetAt(2), caption: standardCaption(assetAt(2)) },
+      { x: 984, y: 662, w: 426, h: 310, fit: 'cover', asset: assetAt(3), caption: standardCaption(assetAt(3)) },
+      { x: 1434, y: 662, w: 402, h: 310, fit: 'cover', asset: assetAt(4), caption: standardCaption(assetAt(4)) },
+    ].filter(item => item.asset);
+  }
+
+  return [
+    { x: 84, y: 242, w: 1118, h: 730, fit: 'cover', asset: assetAt(0), caption: standardCaption(assetAt(0)) },
+    { x: 1230, y: 242, w: 606, h: 228, fit: 'cover', asset: assetAt(1), caption: standardCaption(assetAt(1)) },
+    { x: 1230, y: 498, w: 606, h: 228, fit: 'cover', asset: assetAt(2), caption: standardCaption(assetAt(2)) },
+    { x: 1230, y: 754, w: 606, h: 218, fit: 'contain', asset: assetAt(3), caption: standardCaption(assetAt(3)) },
+  ].filter(item => item.asset);
+}
+
+function buildArchitecturalDeckPlan(subject, index, context, options = {}) {
+  const languageMode = context.brand.languageMode;
+  const coverage = options.coverage || {};
+  const buildingCount = options.buildingCount || 1;
+  const all = index.all;
+  const mix = (...groups) => uniqueAssets(groups.flat().filter(Boolean));
+
+  const overviewPool = mix(index.hero, index.perspectives, index.site, all);
+  const restorationPool = mix(index.restoration, index.hero, index.perspectives, all);
+  const sitePool = mix(index.site, index.aerial, index.perspectives, all);
+  const plansPool = mix(index.plans, index.site, index.technical, all);
+  const sectionsPool = mix(index.elevations, index.sections, index.detail, index.plans, all);
+  const analysisPool = mix(index.functional, index.circulation, index.landscape, index.diagram, index.site, all);
+  const viewsPool = mix(index.perspectives, index.hero, index.detail, all);
+  const nightPool = mix(index.night, index.hero, index.perspectives, all);
+  const detailPool = mix(index.detail, index.elevations, index.sections, index.perspectives, all);
+  const reviewPool = mix(index.technical, index.perspectives, index.site, all);
+
+  return [
+    { kind: 'cover', fileSlug: '01_cover' },
+    {
+      kind: 'summary',
+      fileSlug: '02_snapshot',
+      title: subject.name,
+      subtitle: subject.summary,
+      metrics: [
+        { label: labelForLanguage('Visual Assets', 'الأصول البصرية', languageMode), value: coverage.visualCount || index.all.length || 0 },
+        { label: labelForLanguage('Technical Drawings', 'الرسومات الفنية', languageMode), value: coverage.drawingCount || index.technical.length || 0 },
+        { label: labelForLanguage('3D / Render Views', 'المشاهد ثلاثية الأبعاد', languageMode), value: index.perspectives.length || 0 },
+        { label: labelForLanguage('Buildings Covered', 'المباني المغطاة', languageMode), value: buildingCount },
+      ],
+      notes: [
+        labelForLanguage('Image-led presentation package curated from Services 01 to 05.', 'حزمة عرض بصرية منسقة من الخدمات 01 إلى 05.', languageMode),
+        labelForLanguage('Layouts are optimized for decision-maker review rather than text-heavy reporting.', 'تم تحسين اللوحات لعرض صناع القرار بدلاً من التقارير النصية الثقيلة.', languageMode),
+        labelForLanguage('Boards combine hero imagery, drawings, plans, and analytical support where available.', 'تجمع اللوحات بين الصورة الرئيسية والرسومات والمخططات والتحليلات عند توفرها.', languageMode),
+      ],
+    },
+    { kind: 'board', fileSlug: '03_overview', layout: 'hero-grid', title: labelForLanguage('Building Overview', 'نظرة عامة على المبنى', languageMode), subtitle: labelForLanguage('Hero perspective with supporting views and key presentation visuals.', 'منظور رئيسي مع مشاهد داعمة وعناصر عرض أساسية.', languageMode), eyebrow: labelForLanguage('Overview', 'نظرة عامة', languageMode), assets: pickPresentationAssets(overviewPool, all, 4) },
+    { kind: 'board', fileSlug: '04_restoration', layout: 'diptych', title: labelForLanguage('Restoration Identity', 'هوية الترميم', languageMode), subtitle: labelForLanguage('Condition, rehabilitation, and image-based identity preservation.', 'الحالة والتأهيل والحفاظ على هوية المشروع بصرياً.', languageMode), eyebrow: labelForLanguage('Preservation', 'الحفاظ', languageMode), assets: pickPresentationAssets(restorationPool, all, 2) },
+    { kind: 'board', fileSlug: '05_site_context', layout: 'technical-sheet', title: labelForLanguage('Site and Urban Context', 'الموقع والسياق العمراني', languageMode), subtitle: labelForLanguage('Master/site information, aerial context, and geographic framing.', 'معلومات المخطط العام والموقع والسياق الجوي والإطار الجغرافي.', languageMode), eyebrow: labelForLanguage('Context', 'السياق', languageMode), assets: pickPresentationAssets(sitePool, all, 5), enableRefine: false },
+    { kind: 'board', fileSlug: '06_plans', layout: 'technical-sheet', title: labelForLanguage('Plans and Spatial Structure', 'المخططات والبنية المكانية', languageMode), subtitle: labelForLanguage('Plans, site diagrams, and spatial organization sheets.', 'لوحات المخططات والموقع والتنظيم المكاني.', languageMode), eyebrow: labelForLanguage('Plans', 'المخططات', languageMode), assets: pickPresentationAssets(plansPool, all, 5), enableRefine: false },
+    { kind: 'board', fileSlug: '07_sections_elevations', layout: 'technical-sheet', title: labelForLanguage('Elevations and Sections', 'الواجهات والقطاعات', languageMode), subtitle: labelForLanguage('Technical reading of facade, section, and architectural envelope.', 'قراءة فنية للواجهة والقطاع والغلاف المعماري.', languageMode), eyebrow: labelForLanguage('Technical Sheet', 'لوحة فنية', languageMode), assets: pickPresentationAssets(sectionsPool, all, 5), enableRefine: false },
+    { kind: 'board', fileSlug: '08_analysis', layout: 'analysis-sheet', title: labelForLanguage('Functional, Circulation, and Landscape Analysis', 'تحليل الوظائف والحركة واللاندسكيب', languageMode), subtitle: labelForLanguage('Diagram-led board for movement, use, and open-space logic.', 'لوحة تحليلية للحركة والاستخدام ومنطق المساحات المفتوحة.', languageMode), eyebrow: labelForLanguage('Analysis', 'التحليل', languageMode), assets: pickPresentationAssets(analysisPool, all, 5), enableRefine: false },
+    { kind: 'board', fileSlug: '09_perspectives', layout: 'gallery-sheet', title: labelForLanguage('Exterior Perspectives', 'المناظير الخارجية', languageMode), subtitle: labelForLanguage('Primary hero render supported by alternative presentation views.', 'منظور رئيسي مدعوم بمشاهد عرض بديلة.', languageMode), eyebrow: labelForLanguage('Perspectives', 'المناظير', languageMode), assets: pickPresentationAssets(viewsPool, all, 5) },
+    { kind: 'board', fileSlug: '10_aerial', layout: 'gallery-sheet', title: labelForLanguage('Aerial and Master Planning Views', 'المشاهد الجوية والمخطط العام', languageMode), subtitle: labelForLanguage('Bird’s-eye and context-rich views for board-level storytelling.', 'مشاهد جوية وغنية بالسياق لسرد بصري على مستوى اللوحات.', languageMode), eyebrow: labelForLanguage('Aerial', 'جوي', languageMode), assets: pickPresentationAssets(sitePool, all, 5) },
+    { kind: 'board', fileSlug: '11_day_night', layout: 'diptych', title: labelForLanguage('Day and Night Character', 'الطابع النهاري والليلي', languageMode), subtitle: labelForLanguage('Lighting mood, facade character, and atmosphere across views.', 'أجواء الإضاءة وشخصية الواجهة والجو العام عبر المشاهد.', languageMode), eyebrow: labelForLanguage('Mood Study', 'دراسة المزاج البصري', languageMode), assets: pickPresentationAssets(nightPool, all, 2) },
+    { kind: 'board', fileSlug: '12_detail', layout: 'gallery-sheet', title: labelForLanguage('Architectural Detail and Material Reading', 'قراءة التفاصيل والمواد', languageMode), subtitle: labelForLanguage('Close-up detail, envelope logic, and refined supporting visuals.', 'تفاصيل مقربة ومنطق الغلاف المعماري وصور داعمة مصقولة.', languageMode), eyebrow: labelForLanguage('Detail', 'التفاصيل', languageMode), assets: pickPresentationAssets(detailPool, all, 5) },
+    { kind: 'board', fileSlug: '13_review_panel', layout: 'analysis-sheet', title: labelForLanguage('Design Review Panel', 'لوحة مراجعة التصميم', languageMode), subtitle: labelForLanguage('Balanced sheet mixing views, drawings, and strategic evidence.', 'لوحة متوازنة تجمع بين المشاهد والرسومات والأدلة الاستراتيجية.', languageMode), eyebrow: labelForLanguage('Review', 'المراجعة', languageMode), assets: pickPresentationAssets(reviewPool, all, 5), enableRefine: false },
+    {
+      kind: 'summary',
+      fileSlug: '14_documentation',
+      title: labelForLanguage('Documentation Summary', 'ملخص التوثيق', languageMode),
+      subtitle: labelForLanguage('Package readiness for client review, academic presentation, and design communication.', 'جاهزية الحزمة للمراجعة العميلية والعرض الأكاديمي والتواصل التصميمي.', languageMode),
+      eyebrow: labelForLanguage('Readiness', 'الجاهزية', languageMode),
+      metrics: [
+        { label: labelForLanguage('Indexed Files', 'الملفات المفهرسة', languageMode), value: options.totalAssets || index.all.length || 0 },
+        { label: labelForLanguage('Presentation Boards', 'لوحات العرض', languageMode), value: 15 },
+        { label: labelForLanguage('Decision-Ready Slides', 'شرائح جاهزة للقرار', languageMode), value: 15 },
+      ],
+      notes: [
+        labelForLanguage('Visual hierarchy is prioritized over long-form narrative.', 'تم إعطاء الأولوية للهرمية البصرية بدلاً من السرد الطويل.', languageMode),
+        labelForLanguage('All boards preserve the original project identity while improving presentation polish.', 'تحافظ جميع اللوحات على هوية المشروع الأصلية مع تحسين جودة العرض.', languageMode),
+        labelForLanguage('Nano Banana 2 refinement is applied when the external provider is available.', 'يتم تطبيق تحسين Nano Banana 2 عند توفر المزود الخارجي.', languageMode),
+      ],
+    },
+    {
+      kind: 'summary',
+      fileSlug: '15_closing',
+      title: labelForLanguage('Presentation Conclusion', 'خاتمة العرض', languageMode),
+      subtitle: labelForLanguage('A polished visual package prepared for review panels, clients, and academic juries.', 'حزمة بصرية مصقولة ومجهزة للجان المراجعة والعملاء والتحكيم الأكاديمي.', languageMode),
+      eyebrow: labelForLanguage('Closing', 'الختام', languageMode),
+      metrics: [
+        { label: labelForLanguage('Hero Views', 'المشاهد الرئيسية', languageMode), value: Math.max(1, index.hero.length) },
+        { label: labelForLanguage('Technical Sheets', 'اللوحات الفنية', languageMode), value: Math.max(1, index.technical.length) },
+        { label: labelForLanguage('Analysis Boards', 'لوحات التحليل', languageMode), value: Math.max(1, index.diagram.length + index.site.length) },
+      ],
+      notes: [
+        labelForLanguage('Designed to look like a real architectural competition or design-review package.', 'تم تصميمها لتبدو كحزمة عرض معمارية حقيقية لمسابقات أو مراجعات التصميم.', languageMode),
+        labelForLanguage('Suitable for PowerPoint delivery and optional board export workflows.', 'مناسبة للتسليم عبر PowerPoint ولتدفقات تصدير اللوحات عند الحاجة.', languageMode),
+      ],
+    },
+  ];
+}
+
+async function buildPresentationBoardsFromPlan(plan, subject, index, context, boardsDir, options = {}) {
+  const slides = [];
+  ensureDir(boardsDir);
+
+  for (const item of plan) {
+    const outPath = path.join(boardsDir, `${item.fileSlug}.png`);
+
+    if (item.kind === 'cover') {
+      await buildCoverPresentationBoard(subject, index, context, outPath);
+      slides.push({ imagePath: outPath, title: subject.name });
+      continue;
+    }
+
+    if (item.kind === 'summary') {
+      await buildSummaryPresentationBoard(subject, index, context, outPath, {
+        title: item.title,
+        subtitle: item.subtitle,
+        eyebrow: item.eyebrow,
+        metrics: item.metrics,
+        notes: item.notes,
+        footer: context.brand.projectName,
+      });
+      slides.push({ imagePath: outPath, title: item.title });
+      continue;
+    }
+
+    const placements = buildBoardLayout(item.layout, item.assets || []);
+    await buildPresentationBoardImage({
+      title: item.title,
+      subtitle: item.subtitle,
+      eyebrow: item.eyebrow,
+      footer: context.brand.projectName,
+      accentColor: context.brand.primaryColor,
+      placements,
+      enableRefine: item.enableRefine !== false,
+    }, outPath, context, options);
+    slides.push({ imagePath: outPath, title: item.title });
+  }
+
+  return slides;
+}
+
+async function buildImageBoardPptx(slides, reportTitle, outPath) {
+  const slideEntries = [];
+  const slideRelEntries = [];
+  const imageEntries = [];
+  const slideIdEntries = [];
+  const presentationRelEntries = ['<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>'];
+
+  slides.forEach((slide, index) => {
+    const slideNo = index + 1;
+    const imagePath = slide.imagePath && fs.existsSync(slide.imagePath) ? slide.imagePath : null;
+    const mediaName = imagePath ? `slide${slideNo}${fileExt(imagePath) || '.png'}` : '';
+
+    slideIdEntries.push(`<p:sldId id="${255 + slideNo}" r:id="rId${slideNo + 1}"/>`);
+    presentationRelEntries.push(`<Relationship Id="rId${slideNo + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${slideNo}.xml"/>`);
+
+    slideEntries.push({
+      name: `ppt/slides/slide${slideNo}.xml`,
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      ${imagePath ? `
+      <p:pic>
+        <p:nvPicPr><p:cNvPr id="2" name="Board ${slideNo}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+        <p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="5143500"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      </p:pic>` : ''}
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>`,
+    });
+
+    slideRelEntries.push({
+      name: `ppt/slides/_rels/slide${slideNo}.xml.rels`,
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+  ${imagePath ? `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${mediaName}"/>` : ''}
+</Relationships>`,
+    });
+
+    if (imagePath) {
+      imageEntries.push({ name: `ppt/media/${mediaName}`, data: fs.readFileSync(imagePath) });
+    }
+  });
+
+  const entries = [
+    {
+      name: '[Content_Types].xml',
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="jpeg" ContentType="image/jpeg"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
+  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
+  <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+  <Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/>
+  <Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/>
+  <Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+  ${slides.map((_, idx) => `<Override PartName="/ppt/slides/slide${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join('\n  ')}
+</Types>`,
+    },
+    { name: '_rels/.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>` },
+    { name: 'docProps/app.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Codex</Application><PresentationFormat>On-screen Show (16:9)</PresentationFormat><Slides>${slides.length}</Slides><Notes>0</Notes><HiddenSlides>0</HiddenSlides><MMClips>0</MMClips></Properties>` },
+    { name: 'docProps/core.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xmlEscape(reportTitle)}</dc:title><dc:creator>Codex</dc:creator><cp:lastModifiedBy>Codex</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:modified></cp:coreProperties>` },
+    { name: 'ppt/presentation.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" saveSubsetFonts="1" autoCompressPictures="0"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>${slideIdEntries.join('')}</p:sldIdLst><p:sldSz cx="9144000" cy="5143500" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>` },
+    { name: 'ppt/_rels/presentation.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${presentationRelEntries.join('')}<Relationship Id="rId${slides.length + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps" Target="presProps.xml"/><Relationship Id="rId${slides.length + 3}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps" Target="viewProps.xml"/><Relationship Id="rId${slides.length + 4}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/></Relationships>` },
+    { name: 'ppt/slideMasters/slideMaster1.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="1" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles/></p:sldMaster>` },
+    { name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>` },
+    { name: 'ppt/slideLayouts/slideLayout1.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1"><p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>` },
+    { name: 'ppt/slideLayouts/_rels/slideLayout1.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>` },
+    { name: 'ppt/theme/theme1.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Service06Boards"><a:themeElements><a:clrScheme name="Service06Boards"><a:dk1><a:srgbClr val="1A3554"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="0F172A"/></a:dk2><a:lt2><a:srgbClr val="F8FAFC"/></a:lt2><a:accent1><a:srgbClr val="DFAF67"/></a:accent1><a:accent2><a:srgbClr val="38BDF8"/></a:accent2><a:accent3><a:srgbClr val="10B981"/></a:accent3><a:accent4><a:srgbClr val="F59E0B"/></a:accent4><a:accent5><a:srgbClr val="EF4444"/></a:accent5><a:accent6><a:srgbClr val="6366F1"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="Service06Boards"><a:majorFont><a:latin typeface="Arial"/></a:majorFont><a:minorFont><a:latin typeface="Arial"/></a:minorFont></a:fontScheme><a:fmtScheme name="Service06Boards"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/><a:bgFillStyleLst/></a:fmtScheme></a:themeElements></a:theme>` },
+    { name: 'ppt/presProps.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentationPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>` },
+    { name: 'ppt/viewProps.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:viewPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>` },
+    { name: 'ppt/tableStyles.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def=""/>` },
+    ...slideEntries,
+    ...slideRelEntries,
+    ...imageEntries,
+  ];
+
+  fs.writeFileSync(outPath, createStoredZip(entries));
+}
+
+async function buildArchitecturalPresentationPackage(subject, context, assets, outPath, boardsDir, options = {}) {
+  const assetIndex = buildPresentationAssetIndex(assets);
+  const plan = buildArchitecturalDeckPlan(subject, assetIndex, context, options);
+  const slides = await buildPresentationBoardsFromPlan(plan, subject, assetIndex, context, boardsDir, options);
+  await buildImageBoardPptx(slides, subject.name, outPath);
+  return {
+    pptxPath: outPath,
+    boardsDir,
+    slideCount: slides.length,
+    boardImages: slides.map(slide => slide.imagePath),
+    provider: replicate && parseBooleanLike(options.enableNanoBanana, true) ? 'replicate+nano-banana-2 + local-board-layout' : 'local-board-layout',
+    model: replicate && parseBooleanLike(options.enableNanoBanana, true) ? SERVICE_06_BOARD_IMAGE_MODEL : 'local-architectural-board-composer-v1',
+  };
 }
 
 async function buildWordDossier(dossier, context, outPath) {
@@ -4167,6 +5314,7 @@ function buildResponsePreview(context, dossier, contentModel, outputFiles) {
     assetCount: contentModel.counts.totalAssets,
     buildingDocuments: dossier.buildingRecords.length,
     generatedOutputs: outputFiles.length,
+    aiModel: context.ai?.modelLabel || 'GPT 5',
   };
 }
 
@@ -4875,7 +6023,9 @@ router.post('/generate', (req, res, next) => {
     context.contentModel = contentModel;
     context.linkedJobs = dedupedJobs;
 
-    const dossier = buildDossierModel(context, dedupedJobs, contentModel);
+    const baseDossier = buildDossierModel(context, dedupedJobs, contentModel);
+    const narrativeSynthesis = await synthesizeDossierNarrative(context, dedupedJobs, contentModel, baseDossier);
+    const dossier = applyNarrativeBundleToDossier(baseDossier, narrativeSynthesis.narrative);
 
     const packageRootName = `RUAA_Project_${slugify(context.brand.projectName, 'project')}`;
     const packageRoot = path.join(jobDir, packageRootName);
@@ -4883,6 +6033,10 @@ router.post('/generate', (req, res, next) => {
 
     const copiedAssets = copyAssetsIntoPackage(packageRoot, contentModel, context.brand);
     context.brand.logoPath = firstLogoFromAssets(copiedAssets)?.copiedPath || null;
+    const presentationPptDir = path.join(packageRoot, '05_Presentations', 'PPT');
+    const presentationBoardsDir = path.join(packageRoot, '05_Presentations', 'Boards');
+    const projectBoardsDir = path.join(presentationBoardsDir, 'Project');
+    const buildingBoardsDir = path.join(presentationBoardsDir, 'Buildings');
     const dossierPdfDir = path.join(packageRoot, '06_Dossier', 'Complete_Dossier_PDF');
     const dossierWordDir = path.join(packageRoot, '06_Dossier', 'Complete_Dossier_Word');
     const buildingDir = path.join(packageRoot, '06_Dossier', 'Individual_Buildings');
@@ -4890,12 +6044,11 @@ router.post('/generate', (req, res, next) => {
     const mediaDir = path.join(packageRoot, '08_Media', 'Infographics');
     const videoDir = path.join(packageRoot, '08_Media', 'Videos');
     const reportsDir = path.join(packageRoot, '04_Reports', 'Data_Excel');
-    [dossierPdfDir, dossierWordDir, buildingDir, portfolioDir, mediaDir, videoDir, reportsDir].forEach(ensureDir);
+    [presentationPptDir, projectBoardsDir, buildingBoardsDir, dossierPdfDir, dossierWordDir, buildingDir, portfolioDir, mediaDir, videoDir, reportsDir].forEach(ensureDir);
 
     const dossierPdfPath = path.join(dossierPdfDir, 'main_project_dossier.pdf');
     const dossierWordPath = path.join(dossierWordDir, 'main_project_dossier.docx');
-    const projectPptPath = path.join(packageRoot, '05_Presentations', 'PPT', 'project_summary.pptx');
-    ensureDir(path.dirname(projectPptPath));
+    const projectPptPath = path.join(presentationPptDir, 'project_summary.pptx');
     const outputManifestPath = path.join(reportsDir, 'generated_outputs.xlsx');
     const metadataSummaryPath = path.join(packageRoot, '00_Project_Metadata', 'package_manifest.json');
     ensureDir(path.dirname(metadataSummaryPath));
@@ -4910,6 +6063,12 @@ router.post('/generate', (req, res, next) => {
       .filter(asset => asset.copiedPath && asset.usage !== 'logo' && isWebReadyImage(fileExt(asset.copiedPath)))
       .slice(0, 8)
       .map(asset => ({ path: asset.copiedPath, caption: asset.name }));
+    const presentationOptions = {
+      enableNanoBanana: parseBooleanLike(req.body.enableNanoBanana, true),
+      coverage: dossier.coverage || buildCoverageModel(dedupedJobs, contentModel),
+      totalAssets: contentModel.counts.totalAssets,
+      buildingCount: dossier.buildingRecords.length,
+    };
 
     await buildWordDossier(dossier, context, dossierWordPath);
     await buildPdfDossier(dossier, context, representativeImages, dossierPdfPath);
@@ -4919,27 +6078,18 @@ router.post('/generate', (req, res, next) => {
       const slug = slugify(building.name, 'building');
       const buildingWordPath = path.join(buildingDir, `${slug}.docx`);
       const buildingPdfPath = path.join(buildingDir, `${slug}.pdf`);
-      const buildingPptPath = path.join(buildingDir, `${slug}.pptx`);
+      const buildingPptSubdir = path.join(presentationPptDir, 'Buildings');
+      const buildingPptPath = path.join(buildingPptSubdir, `${slug}.pptx`);
+      const buildingBoardDir = path.join(buildingBoardsDir, slug);
+      ensureDir(buildingPptSubdir);
+      ensureDir(buildingBoardDir);
       const imagePath = firstImageFromAssets(copiedAssets.filter(asset => asset.building === building.name));
       await buildWordBuildingDocument(building, context, buildingWordPath);
       await buildPdfBuildingDocument(building, context, imagePath, buildingPdfPath);
-      await buildSimplePptx([
-        {
-          title: building.name,
-          subtitle: building.summary,
-          imagePath,
-        },
-        {
-          title: labelForLanguage('Available Outputs', 'المخرجات المتاحة', context.brand.languageMode),
-          subtitle: building.assets.slice(0, 10).map(asset => `${asset.name} (${localizedAssetType(asset.type, context.brand.languageMode)})`).join(' | ')
-            || localizeTemplateText('No building-specific files were indexed.', 'لم يتم فف‡رسة ملفات خاصة بف‡ذا المبنف‰.', context.brand.languageMode),
-          imagePath: null,
-        },
-      ], building.name, buildingPptPath, {
-        languageMode: context.brand.languageMode,
-        typography: context.brand.typography,
-        logoPath: context.brand.logoPath,
-      });
+      await buildArchitecturalPresentationPackage({
+        name: building.name,
+        summary: building.summary,
+      }, context, building.assets, buildingPptPath, buildingBoardDir, presentationOptions);
 
       buildingOutputs.push(
         { label: `${building.name} (${labelForLanguage('Word', 'وورد', context.brand.languageMode)})`, path: buildingWordPath },
@@ -4948,38 +6098,20 @@ router.post('/generate', (req, res, next) => {
       );
     }
 
-    await buildSimplePptx([
-      {
-        title: context.brand.projectName,
-        subtitle: dossier.executiveSummary,
-        imagePath: representativeImages[0]?.path || null,
-      },
-      {
-        title: labelForLanguage('Documentation Scope', 'نطاف‚ التوثيف‚', context.brand.languageMode),
-        subtitle: dossier.methodology,
-        imagePath: representativeImages[1]?.path || null,
-      },
-      {
-        title: labelForLanguage('Building Files', 'ملفات المباني', context.brand.languageMode),
-        subtitle: dossier.buildingRecords.map(building => building.name).join(' | ')
-          || localizeTemplateText('General project package', 'حزمة مشروع عامة', context.brand.languageMode),
-        imagePath: representativeImages[2]?.path || null,
-      },
-    ], context.brand.projectName, projectPptPath, {
-      languageMode: context.brand.languageMode,
-      typography: context.brand.typography,
-      logoPath: context.brand.logoPath,
-    });
+    const projectPresentation = await buildArchitecturalPresentationPackage({
+      name: context.brand.projectName,
+      summary: dossier.executiveSummary,
+    }, context, copiedAssets.filter(asset => asset.usage !== 'logo'), projectPptPath, projectBoardsDir, presentationOptions);
 
     const infographicPaths = await buildInfographics(context, contentModel, dossier, mediaDir);
-    fs.writeFileSync(promoScriptPath, buildPromoScript(context, dossier, contentModel));
-    fs.writeFileSync(captionsPath, buildSocialCaptions(context, contentModel));
+    fs.writeFileSync(promoScriptPath, buildPromoScript(context, dossier, contentModel, narrativeSynthesis.narrative));
+    fs.writeFileSync(captionsPath, buildSocialCaptions(context, contentModel, narrativeSynthesis.narrative));
     fs.writeFileSync(userGuidePath, [
       localizeTemplateText(`${context.brand.projectName} - User Guide`, `${context.brand.projectName} - دليل الاستخدام`, context.brand.languageMode),
       '',
       localizeTemplateText('1. Open the PDF dossier for official review or printing.', '1. افتح ملف PDF الخاص بالوثيف‚ة الشاملة للمراجعة الرسمية أو الطباعة.', context.brand.languageMode),
       localizeTemplateText('2. Open the DOCX dossier when editable narrative formatting is required.', '2. افتح ملف DOCX عندما تفƒون ف‡نافƒ حاجة إلف‰ تعديل السرد أو التنسيف‚.', context.brand.languageMode),
-      localizeTemplateText('3. Use the PPTX deck for presentation and stakeholder briefing.', '3. استخدم ملف PPTX للعروض التف‚ديمية وإحاطة أصحاب المصلحة.', context.brand.languageMode),
+      localizeTemplateText('3. Use the PPTX deck and the board sheets inside 05_Presentations for presentation and stakeholder briefing.', '3. استخدم ملف PPTX ولوحات العرض داخل 05_Presentations للعروض التف‚ديمية وإحاطة أصحاب المصلحة.', context.brand.languageMode),
       localizeTemplateText('4. Open 07_Digital_Portfolio/HTML_Website/index.html for the portfolio microsite.', '4. افتح 07_Digital_Portfolio/HTML_Website/index.html لعرض موف‚ع المحفظة الرف‚مية.', context.brand.languageMode),
       localizeTemplateText('5. Review 04_Reports/Data_Excel/generated_outputs.xlsx for the full output inventory.', '5. راجع 04_Reports/Data_Excel/generated_outputs.xlsx للاطلاع علف‰ ف‚ائمة المخرجات فƒاملة.', context.brand.languageMode),
       localizeTemplateText('6. Review 08_Media/Videos for script-ready promotional content.', '6. راجع 08_Media/Videos للوصول إلف‰ المحتوف‰ الإعلامي الجاف‡ز للنصوص.', context.brand.languageMode),
@@ -4991,6 +6123,12 @@ router.post('/generate', (req, res, next) => {
       { label: 'Main Dossier (PDF)', path: dossierPdfPath },
       { label: 'Main Dossier (Word)', path: dossierWordPath },
       { label: 'Project Summary (PPTX)', path: projectPptPath },
+      ...(projectPresentation?.boardImages?.[0]
+        ? [{ label: 'Project Cover Board (PNG)', path: projectPresentation.boardImages[0] }]
+        : []),
+      ...(projectPresentation?.boardImages?.[6]
+        ? [{ label: 'Project Board Preview (PNG)', path: projectPresentation.boardImages[6] }]
+        : []),
       { label: 'Digital Portfolio (HTML)', path: portfolioHtmlPath },
       { label: 'Infographic (SVG)', path: infographicPaths.svgPath },
       { label: 'Infographic (PNG)', path: infographicPaths.pngPath },
@@ -5020,6 +6158,12 @@ router.post('/generate', (req, res, next) => {
       serviceDefinition: SERVICE_06_DEFINITION,
       project: context.project,
       brand: context.brand,
+      textGeneration: {
+        aiModel: context.ai.modelLabel,
+        aiModelKey: context.ai.model,
+        provider: narrativeSynthesis.provider,
+        model: narrativeSynthesis.model,
+      },
       linkedJobs: dedupedJobs.map(job => ({
         jobId: job.jobId,
         sourceLabel: getNeutralSourceLabel(job, context.brand.languageMode),
@@ -5037,10 +6181,24 @@ router.post('/generate', (req, res, next) => {
         subtitle: dossier.subtitle,
         buildingDocuments: dossier.buildingRecords.map(building => building.name),
       },
+      presentationPackage: {
+        boardMode: true,
+        nanoBananaEnabled: presentationOptions.enableNanoBanana,
+        projectDeck: {
+          slideCount: projectPresentation?.slideCount || 0,
+          boardCount: projectPresentation?.boardImages?.length || 0,
+          provider: projectPresentation?.provider || 'local-board-layout',
+          model: projectPresentation?.model || 'local-architectural-board-composer-v1',
+        },
+      },
       generatedAt: new Date().toISOString(),
       warnings: [
-        neutralizeServiceMentions('This package fully handles local aggregation, indexing, folder packaging, PDF/Word/PPTX/HTML generation, infographics, and script-ready media support.', context.brand.languageMode),
+        ...narrativeSynthesis.warnings,
+        neutralizeServiceMentions('This package fully handles local aggregation, indexing, folder packaging, PDF/Word/PPTX/HTML generation, architecture-board composition, infographics, and script-ready media support.', context.brand.languageMode),
         neutralizeServiceMentions('Rendered MP4 video generation, studio-grade voiceover synthesis, and advanced live 3D/map embedding beyond linked HTML assets would require additional runtime tooling or external APIs.', context.brand.languageMode),
+        ...(projectPresentation?.provider === 'local-board-layout'
+          ? [neutralizeServiceMentions('Nano Banana 2 refinement was not applied during generation, so Service 06 used the local architectural board composer fallback for presentation boards.', context.brand.languageMode)]
+          : []),
       ],
     };
 
@@ -5100,8 +6258,8 @@ router.post('/generate', (req, res, next) => {
       success: true,
       jobId,
       serviceName: SERVICE_06_NAME,
-      provider: 'local-packaging',
-      model: 'documentation-media-pipeline-v1',
+      provider: narrativeSynthesis.provider || 'local-packaging',
+      model: narrativeSynthesis.model || 'documentation-media-pipeline-v1',
       preview: buildResponsePreview(context, dossier, contentModel, outputFiles),
       outputFiles,
       packageRoot: `/outputs/${jobId}/${packageRootName}`,
@@ -5144,3 +6302,6 @@ router.get('/job/:jobId', async (req, res) => {
 });
 
 module.exports = router;
+
+
+

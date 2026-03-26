@@ -2,3 +2,8 @@
 node_modules
 outputs/
 uploads/
+*.log
+tmp_*.log
+verify_*.log
+server_stdout.log
+server_stderr.log

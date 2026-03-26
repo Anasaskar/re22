@@ -51,6 +51,7 @@ const PDF_FONT_BOLD = 'C:\\Windows\\Fonts\\arialbd.ttf';
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN || '';
 const REPLICATE_3D_PRIMARY_MODEL = process.env.REPLICATE_3D_MODEL || 'tencent/hunyuan-3d-3.1';
 const REPLICATE_3D_FALLBACK_MODEL = process.env.REPLICATE_3D_FALLBACK_MODEL || 'tencent/hunyuan3d-2';
+const SERVICE_05_SCENE_ANALYSIS_MODEL = process.env.SERVICE_05_SCENE_ANALYSIS_MODEL || 'openai/gpt-4o';
 const APP_BASE_URL = process.env.APP_BASE_URL || 'http://localhost:3000';
 const SERVICE_05_IMAGE_MODEL = process.env.SERVICE_05_IMAGE_MODEL
   || process.env.NANO_BANANA_IMAGE_MODEL
@@ -398,8 +399,9 @@ function getBuildingReferenceImages(building, context) {
 
 function buildReplicate3DPrompt(building, context) {
   const heritageElements = (building.styleElements || []).slice(0, 8).join(', ');
-  const districtContext = context.linkedServices.service3
-    ? `${context.linkedServices.service3.districtName || 'historic district'} ${context.linkedServices.service3.city ? `in ${context.linkedServices.service3.city}` : ''}`
+  const spatialContext = getSpatialContext(context);
+  const districtContext = spatialContext
+    ? `${spatialContext.districtName || 'historic district'} ${spatialContext.city ? `in ${spatialContext.city}` : ''}`
     : context.project.location || 'historic urban context';
   const viewInfo = [];
   if (building.sourceViews?.front?.length) viewInfo.push('front facade reference');
@@ -427,7 +429,6 @@ function buildReplicateAttemptInputs(building, context) {
       model: REPLICATE_3D_PRIMARY_MODEL,
       label: 'primary-images',
       input: {
-        prompt,
         images: imageUris,
         texture: config.enable_texture,
         target_polycount: config.target_polycount,
@@ -440,7 +441,6 @@ function buildReplicateAttemptInputs(building, context) {
       model: REPLICATE_3D_PRIMARY_MODEL,
       label: 'primary-image',
       input: {
-        prompt,
         image: imageUris[0],
         texture: config.enable_texture,
         target_polycount: config.target_polycount,
@@ -465,7 +465,6 @@ function buildReplicateAttemptInputs(building, context) {
       label: 'fallback-image',
       input: {
         image: imageUris[0],
-        prompt,
         remove_background: true,
       },
     });
@@ -887,18 +886,27 @@ function summarizeService2Influence(service2Jobs = []) {
 function buildContextInfluenceSummary(context) {
   const service2 = summarizeService2Influence(context.linkedServices.service2Jobs || []);
   const service3 = context.linkedServices.service3;
+  const uploadedSceneContext = context.linkedServices.uploadedSceneContext;
+  const spatialContext = getSpatialContext(context);
   return {
     generationMode: context.modeling.generationMode,
     service2,
-    service3: service3 ? {
+    service3: spatialContext ? {
       linked: true,
-      districtName: service3.districtName || '',
-      urbanPattern: service3.spatialGuidance?.urbanPattern || '',
-      terrainReliefBias: service3.spatialGuidance?.terrainReliefBias || 0,
-      streetCount: service3.spatialGuidance?.streetCount || 0,
-      publicSpaceCount: service3.spatialGuidance?.publicSpaceCount || 0,
-      openSpaceCount: service3.spatialGuidance?.openSpaceCount || 0,
-      buildingCount: service3.spatialGuidance?.buildingCount || 0,
+      inferredFromUploads: !service3 && Boolean(uploadedSceneContext),
+      districtName: spatialContext.districtName || '',
+      urbanPattern: spatialContext.spatialGuidance?.urbanPattern || '',
+      terrainReliefBias: spatialContext.spatialGuidance?.terrainReliefBias || 0,
+      streetCount: spatialContext.spatialGuidance?.streetCount || 0,
+      publicSpaceCount: spatialContext.spatialGuidance?.publicSpaceCount || 0,
+      openSpaceCount: spatialContext.spatialGuidance?.openSpaceCount || 0,
+      buildingCount: spatialContext.spatialGuidance?.buildingCount || 0,
+    } : { linked: false },
+    uploadedScene: uploadedSceneContext ? {
+      linked: true,
+      scope: uploadedSceneContext.analysis?.scope || 'building',
+      buildingCount: uploadedSceneContext.analysis?.buildingCount || 1,
+      reason: uploadedSceneContext.analysis?.reason || '',
     } : { linked: false },
   };
 }
@@ -942,8 +950,9 @@ function collectNanoBananaReferenceImages(context, view, rawGuidePath = '') {
     if (selected.length >= 6) break;
   }
 
-  if (selected.length < 6 && context.linkedServices.service3 && ['bird_nw', 'bird_alt', 'night_facade'].includes(view.id)) {
-    for (const imagePath of collectService3ReferenceImages(context.linkedServices.service3, 3)) {
+  const spatialContext = getSpatialContext(context);
+  if (selected.length < 6 && spatialContext && ['bird_nw', 'bird_alt', 'night_facade'].includes(view.id)) {
+    for (const imagePath of collectService3ReferenceImages(spatialContext, 3)) {
       if (seen.has(imagePath)) continue;
       seen.add(imagePath);
       selected.push(imagePath);
@@ -982,7 +991,7 @@ function buildNanoBananaPrompt(context, view, referencePaths = []) {
     promptParts.push('Treat the provided Service 02 and Service 03 references as the primary visual truth. Use any structural guidance image only to preserve angle, silhouette, and composition.');
   }
 
-  if (context.linkedServices.service3 && ['bird_nw', 'bird_alt', 'night_facade'].includes(view.id)) {
+  if (getSpatialContext(context) && ['bird_nw', 'bird_alt', 'night_facade'].includes(view.id)) {
     promptParts.push('Where urban context or terrain references are provided, use them to keep terrain, streets, open spaces, and district relationships faithful without inventing unrelated buildings.');
   }
 
@@ -1229,7 +1238,269 @@ function buildFallbackBuildingSpec(input, detailLevel, modelIntent) {
   };
 }
 
-function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
+function inferUploadedSceneScopeHint(input, uploadedFilesSummary) {
+  const haystack = [
+    input.projectTitle,
+    input.buildingName,
+    input.districtName,
+    input.location,
+    input.notes,
+    ...(uploadedFilesSummary.items || []).map(item => item.originalName),
+  ].map(value => normalizeText(value).toLowerCase()).join(' ');
+
+  const districtHints = [
+    'district', 'neighborhood', 'neighbourhood', 'street', 'streets', 'block', 'urban', 'masterplan',
+    'master plan', 'site plan', 'houses', 'rows of houses', 'buildings', 'context', 'roads', 'alleys',
+    'حي', 'حارة', 'منطقة', 'حي تاريخي', 'شوارع', 'مباني', 'مجموعة مبان', 'مخطط',
+  ];
+  const buildingHints = [
+    'single building', 'one building', 'facade', 'front facade', 'elevation', 'entrance',
+    'مبنى', 'واجهة', 'مدخل',
+  ];
+
+  const districtScore = districtHints.reduce((count, hint) => count + (haystack.includes(hint) ? 1 : 0), 0);
+  const buildingScore = buildingHints.reduce((count, hint) => count + (haystack.includes(hint) ? 1 : 0), 0);
+  if (districtScore > buildingScore) return 'district';
+  return 'building';
+}
+
+function normalizeUploadedSceneAnalysis(analysis, input, uploadedFilesSummary) {
+  const scopeHint = inferUploadedSceneScopeHint(input, uploadedFilesSummary);
+  const streetCount = clamp(normalizeInteger(analysis?.streetCount, scopeHint === 'district' ? 1 : 0), 0, 6);
+  const publicSpaceCount = clamp(normalizeInteger(analysis?.publicSpaceCount, scopeHint === 'district' ? 1 : 0), 0, 4);
+  const openSpaceCount = clamp(normalizeInteger(analysis?.openSpaceCount, scopeHint === 'district' ? 1 : 0), 0, 4);
+  const buildingCountHint = normalizeInteger(analysis?.buildingCount, 0);
+  const rawScope = normalizeText(analysis?.scope).toLowerCase();
+  const scope = ['building', 'district'].includes(rawScope)
+    ? rawScope
+    : (buildingCountHint > 1 || streetCount > 0 || publicSpaceCount > 0 || openSpaceCount > 0 || scopeHint === 'district'
+      ? 'district'
+      : 'building');
+  const buildingCount = scope === 'district'
+    ? clamp(buildingCountHint || Math.max((uploadedFilesSummary.images || 1) + 2, 3), 2, 8)
+    : 1;
+  const floorsMin = clamp(normalizeInteger(analysis?.floorsMin, Math.max(normalizeInteger(input.floors, 2), 1)), 1, 8);
+  const floorsMax = clamp(Math.max(normalizeInteger(analysis?.floorsMax, floorsMin), floorsMin), floorsMin, 10);
+  const keyElements = Array.isArray(analysis?.keyElements)
+    ? analysis.keyElements.map(item => normalizeText(item)).filter(Boolean).slice(0, 12)
+    : parseCsvList(analysis?.keyElements || input.styleElements || 'arches, windows, doors, facade bands');
+
+  return {
+    scope,
+    sceneType: normalizeText(analysis?.sceneType, scope === 'district' ? 'street_block' : 'single_building'),
+    buildingCount,
+    streetCount,
+    publicSpaceCount,
+    openSpaceCount,
+    urbanPattern: normalizeText(analysis?.urbanPattern, scope === 'district' ? 'Organic' : 'Compact'),
+    architecturalStyle: normalizeText(analysis?.architecturalStyle, input.architecturalStyle || ''),
+    buildingName: normalizeText(analysis?.buildingName, input.buildingName || ''),
+    districtName: normalizeText(analysis?.districtName, input.districtName || ''),
+    dominantBuildingType: normalizeText(analysis?.dominantBuildingType, input.targetFunction || 'Heritage building'),
+    floorsMin,
+    floorsMax,
+    keyElements,
+    reason: compactText(analysis?.reason || analysis?.notes || '', 260),
+    notes: compactText(analysis?.notes || analysis?.reason || '', 420),
+  };
+}
+
+async function analyzeUploadedSceneWithVision(input, uploadedFilesSummary) {
+  const rasterPaths = (uploadedFilesSummary.items || [])
+    .filter(item => item.category === 'image' && item.storedPath && fs.existsSync(item.storedPath))
+    .map(item => item.storedPath)
+    .slice(0, 3);
+
+  if (!rasterPaths.length) return null;
+
+  const fallback = normalizeUploadedSceneAnalysis({}, input, uploadedFilesSummary);
+  if (!replicate) return fallback;
+
+  try {
+    const output = await replicate.run(SERVICE_05_SCENE_ANALYSIS_MODEL, {
+      input: {
+        system_prompt: 'You are an expert urban heritage analyst for architectural 3D reconstruction. Look at uploaded site photos and decide whether they depict a single building or a multi-building street/district scene. Always respond with valid JSON only.',
+        prompt: `Analyze these uploaded architectural reference images for Service 05.
+
+Determine whether the scene should be modeled as a single building or as a district / street block.
+Focus on what is visibly present in the image, not on imagined future design intent.
+
+Project hints:
+- Project title: ${normalizeText(input.projectTitle, 'Unknown')}
+- User building name: ${normalizeText(input.buildingName, 'Unknown')}
+- User district name: ${normalizeText(input.districtName, 'Unknown')}
+- Location: ${normalizeText(input.location, 'Unknown')}
+- Architectural style hint: ${normalizeText(input.architecturalStyle, 'Unknown')}
+- Notes: ${normalizeText(input.notes, 'None')}
+
+Return ONLY this JSON object:
+{
+  "scope": "building or district",
+  "sceneType": "single_building / street_block / district",
+  "buildingCount": 0,
+  "streetCount": 0,
+  "publicSpaceCount": 0,
+  "openSpaceCount": 0,
+  "urbanPattern": "Organic / Grid / Mixed / Compact",
+  "architecturalStyle": "...",
+  "buildingName": "...",
+  "districtName": "...",
+  "dominantBuildingType": "...",
+  "floorsMin": 1,
+  "floorsMax": 3,
+  "keyElements": ["..."],
+  "reason": "brief explanation",
+  "notes": "brief modeling guidance"
+}`,
+        image_input: rasterPaths.map(fileToDataUri),
+        max_completion_tokens: 500,
+        temperature: 0.1,
+      },
+    });
+
+    const text = Array.isArray(output) ? output.join('') : String(output || '');
+    const json = text.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) return fallback;
+    return normalizeUploadedSceneAnalysis(JSON.parse(json), input, uploadedFilesSummary);
+  } catch (error) {
+    return {
+      ...fallback,
+      notes: compactText(`Uploaded-scene analysis fallback used. ${error.message}`, 420),
+    };
+  }
+}
+
+function buildUploadedSceneBuildingSpecs(input, detailLevel, modelIntent, sceneAnalysis) {
+  const printable = INTENT_PROFILES[modelIntent]?.printable;
+  const baseStyle = normalizeText(input.architecturalStyle, sceneAnalysis.architecturalStyle || 'Traditional heritage');
+  const baseType = normalizeText(input.targetFunction, sceneAnalysis.dominantBuildingType || 'Heritage building');
+  const baseFloors = clamp(
+    normalizeInteger(input.floors, Math.round((sceneAnalysis.floorsMin + sceneAnalysis.floorsMax) / 2) || 2),
+    sceneAnalysis.floorsMin,
+    sceneAnalysis.floorsMax
+  );
+  const baseArea = Math.max(normalizeFloat(input.area, sceneAnalysis.scope === 'district' ? 280 : 360), 160);
+  const count = sceneAnalysis.scope === 'district' ? sceneAnalysis.buildingCount : 1;
+  const keyElements = sceneAnalysis.keyElements.length
+    ? sceneAnalysis.keyElements
+    : parseCsvList(input.styleElements || 'arches, windows, doors, facade bands');
+  const facadeComplexity = clamp(
+    0.36 + keyElements.length * 0.026 + (sceneAnalysis.streetCount ? 0.08 : 0),
+    0.34,
+    0.88
+  );
+
+  return Array.from({ length: count }, (_, index) => {
+    const roleMultiplier = index === 0 ? 1.18 : 0.72 + (index % 3) * 0.12;
+    const floors = clamp(baseFloors + (index === 0 ? 0 : (index % 3) - 1), 1, Math.max(sceneAnalysis.floorsMax, baseFloors));
+    const area = Math.max(baseArea * roleMultiplier, 140);
+    const footprintArea = Math.max(area / Math.max(floors, 1), 110);
+    const width = Math.max(Math.sqrt(footprintArea * (1.18 + (index % 2) * 0.12)), 8.4);
+    const depth = Math.max(footprintArea / width, 7.2);
+    const name = index === 0
+      ? normalizeText(input.buildingName, sceneAnalysis.buildingName || 'Primary Heritage Building')
+      : `${normalizeText(sceneAnalysis.districtName, 'Context')} Building ${index + 1}`;
+    const style = normalizeText(baseStyle, 'Traditional heritage');
+    const buildingType = index === 0
+      ? normalizeText(baseType, 'Adaptive reuse building')
+      : normalizeText(sceneAnalysis.dominantBuildingType, 'Context heritage building');
+    const guidance = {
+      hasFront: index === 0,
+      hasRear: false,
+      hasSideViews: sceneAnalysis.scope === 'district',
+      hasAerial: false,
+      hasInterior: false,
+      hasFloorPlan: false,
+      hasNight: false,
+      hasStreet: sceneAnalysis.streetCount > 0,
+      multiFacadeCoverage: sceneAnalysis.scope === 'district' ? 2 : 1,
+      facadeComplexity: clamp(facadeComplexity - index * 0.04, 0.34, 0.88),
+      courtyardLikelihood: clamp((sceneAnalysis.scope === 'district' ? 0.18 : 0.1) + (keyElements.some(item => item.toLowerCase().includes('courtyard')) ? 0.14 : 0), 0.1, 0.58),
+      roofArticulation: clamp(0.2 + (sceneAnalysis.scope === 'district' ? 0.08 : 0), 0.18, 0.62),
+      asymmetry: clamp(sceneAnalysis.scope === 'district' ? 0.24 + (index % 2) * 0.06 : 0.18, 0.16, 0.46),
+      facadeDepth: clamp(0.2 + facadeComplexity * 0.22, 0.18, 0.5),
+      openingDepth: clamp(0.12 + facadeComplexity * 0.18, 0.12, 0.34),
+    };
+
+    return {
+      id: slugify(name, index === 0 ? 'primary_heritage_building' : `context_building_${index + 1}`),
+      name,
+      style,
+      buildingType,
+      area,
+      floors,
+      width,
+      depth,
+      height: floors * 3.7,
+      wallThickness: printable ? 1.2 : 0.35,
+      styleElements: keyElements,
+      heritageValue: sceneAnalysis.scope === 'district' ? 'Contributing urban fabric' : 'Primary heritage asset',
+      notes: sceneAnalysis.notes || normalizeText(input.notes),
+      palette: colorFromStyle(style),
+      detailLevel,
+      sourceJobId: null,
+      generationMode: sceneAnalysis.scope === 'district' ? 'uploaded-scene-district' : 'uploaded-scene-building',
+      sourceViews: {},
+      modelingGuidance: guidance,
+      roofType: keyElements.some(item => item.toLowerCase().includes('courtyard'))
+        ? 'courtyard_u'
+        : sceneAnalysis.scope === 'district'
+          ? (index % 2 ? 'stepped_roof' : 'articulated_flat')
+          : 'articulated_flat',
+      facadeDepthFactor: guidance.facadeDepth,
+      openingDepthFactor: guidance.openingDepth,
+      courtyardRatio: guidance.courtyardLikelihood,
+      massingVariation: guidance.facadeComplexity,
+      sideArticulation: guidance.hasSideViews ? 0.3 : 0.14,
+      asymmetry: guidance.asymmetry,
+    };
+  });
+}
+
+async function buildUploadedSceneContext(input, uploadedFilesSummary, detailLevel, modelIntent) {
+  const analysis = await analyzeUploadedSceneWithVision(input, uploadedFilesSummary);
+  if (!analysis) return null;
+
+  return {
+    service: null,
+    serviceName: 'Uploaded Scene Context',
+    derivedFromUploads: true,
+    districtName: normalizeText(input.districtName, analysis.districtName || ''),
+    city: normalizeText(input.city, input.location || ''),
+    urbanAnalysis: {
+      detectedStyle: normalizeText(analysis.architecturalStyle, input.architecturalStyle || 'Traditional heritage'),
+      urbanPattern: normalizeText(analysis.urbanPattern, analysis.scope === 'district' ? 'Organic' : 'Compact'),
+      keyFeatures: analysis.keyElements,
+      heritageValue: analysis.scope === 'district' ? 'High' : 'Medium',
+      restorationNotes: analysis.notes || analysis.reason || '',
+    },
+    spatialGuidance: {
+      terrainReliefBias: analysis.scope === 'district' ? 0.22 : 0.16,
+      streetCount: analysis.streetCount,
+      publicSpaceCount: analysis.publicSpaceCount,
+      openSpaceCount: analysis.openSpaceCount,
+      buildingCount: analysis.buildingCount,
+      urbanPattern: normalizeText(analysis.urbanPattern, analysis.scope === 'district' ? 'Organic' : 'Compact'),
+      style: normalizeText(analysis.architecturalStyle, input.architecturalStyle || ''),
+      keyFeatures: analysis.keyElements,
+    },
+    terrainSummary: {
+      reliefMeters: analysis.scope === 'district' ? 3 : 0,
+    },
+    representativeImages: (uploadedFilesSummary.items || [])
+      .filter(item => item.category === 'image' && item.storedPath && fs.existsSync(item.storedPath))
+      .map(item => item.storedPath)
+      .slice(0, 6),
+    buildingSpecs: buildUploadedSceneBuildingSpecs(input, detailLevel, modelIntent, analysis),
+    analysis,
+  };
+}
+
+function getSpatialContext(context) {
+  return context.linkedServices.service3 || context.linkedServices.uploadedSceneContext || null;
+}
+
+async function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
   const service2Jobs = linkedJobs.filter(job => job.service === 2);
   const service3 = linkedJobs.find(job => job.service === 3) || null;
   const detailLevel = ['low', 'medium', 'high'].includes(normalizeText(input.detailLevel, 'medium'))
@@ -1238,32 +1509,43 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
   const modelIntent = Object.keys(INTENT_PROFILES).includes(normalizeText(input.modelIntent, 'presentation'))
     ? normalizeText(input.modelIntent, 'presentation')
     : 'presentation';
+  const uploadedSceneContext = !service3 && !service2Jobs.length
+    ? await buildUploadedSceneContext(input, uploadedFilesSummary, detailLevel, modelIntent)
+    : null;
+  const spatialContext = service3 || uploadedSceneContext;
   const requestedScope = normalizeText(input.modelScope, 'auto');
   const modelScope = requestedScope === 'auto'
-    ? (service3 || service2Jobs.length > 1 ? 'district' : 'building')
+    ? (spatialContext?.analysis?.scope === 'district' || service2Jobs.length > 1 || service3 ? 'district' : 'building')
     : requestedScope;
   const exportFormats = parseCsvList(input.exportFormats || 'obj,stl,glb,fbx');
+  const uploadedSceneBuildings = uploadedSceneContext?.buildingSpecs || [];
   const targetBuildings = service2Jobs.length
     ? service2Jobs.map((job, index) => buildBuildingSpec(job, detailLevel, modelIntent, index))
-    : [buildFallbackBuildingSpec(input, detailLevel, modelIntent)];
+    : uploadedSceneBuildings.length
+      ? (modelScope === 'district' ? uploadedSceneBuildings : [uploadedSceneBuildings[0]])
+      : [buildFallbackBuildingSpec(input, detailLevel, modelIntent)];
   const generationMode = service3
     ? 'guided-district'
     : service2Jobs.length
       ? 'guided-building'
-      : 'conceptual-massing';
+      : uploadedSceneContext
+        ? modelScope === 'district'
+          ? 'uploaded-scene-district'
+          : 'uploaded-scene-building'
+        : 'conceptual-massing';
 
   return {
     project: {
       title: normalizeText(input.projectTitle)
         || normalizeText(input.buildingName)
-        || normalizeText(service3?.districtName)
+        || normalizeText(spatialContext?.districtName)
         || normalizeText(targetBuildings[0]?.name, 'Heritage 3D Modeling Project'),
-      buildingName: normalizeText(input.buildingName, targetBuildings[0]?.name || 'Heritage Building'),
-      districtName: normalizeText(input.districtName, service3?.districtName || ''),
-      city: normalizeText(input.city, service3?.city || ''),
-      location: normalizeText(input.location, service3?.city || ''),
-      architecturalStyle: normalizeText(input.architecturalStyle, targetBuildings[0]?.style || service3?.urbanAnalysis?.detectedStyle || ''),
-      notes: normalizeText(input.notes),
+      buildingName: normalizeText(input.buildingName, uploadedSceneContext?.analysis?.buildingName || targetBuildings[0]?.name || 'Heritage Building'),
+      districtName: normalizeText(input.districtName, spatialContext?.districtName || ''),
+      city: normalizeText(input.city, spatialContext?.city || ''),
+      location: normalizeText(input.location, spatialContext?.city || ''),
+      architecturalStyle: normalizeText(input.architecturalStyle, targetBuildings[0]?.style || spatialContext?.urbanAnalysis?.detectedStyle || ''),
+      notes: normalizeText(input.notes, uploadedSceneContext?.analysis?.notes || ''),
     },
     modeling: {
       detailLevel,
@@ -1273,7 +1555,7 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
       modelScope,
       minimumThicknessMm: Math.max(normalizeFloat(input.minimumThicknessMm, modelIntent === 'printing' ? 2.4 : 1.2), modelIntent === 'printing' ? 2 : 0.8),
       strategicViewCount: Math.max(normalizeInteger(input.renderViewCount, 6), 4),
-      includeTerrain: String(input.includeTerrain || (service3 ? 'true' : 'false')).toLowerCase() !== 'false',
+      includeTerrain: String(input.includeTerrain || (spatialContext ? 'true' : 'false')).toLowerCase() !== 'false',
       includeMasterPlan: String(input.includeMasterPlan || (modelScope === 'district' ? 'true' : 'false')).toLowerCase() !== 'false',
       includeSeparateBuildings: String(input.includeSeparateBuildings || 'true').toLowerCase() !== 'false',
       exportFormats: exportFormats.length ? exportFormats : ['obj', 'stl', 'glb', 'fbx'],
@@ -1290,9 +1572,11 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
     linkedServices: {
       service2Jobs,
       service3,
+      uploadedSceneContext,
     },
     targetBuildings,
     uploadedFilesSummary,
+    uploadedSceneAnalysis: uploadedSceneContext?.analysis || null,
     representativeImages: pickRepresentativeImages(linkedJobs, uploadedFilesSummary),
     generatedAt: new Date().toISOString(),
   };
@@ -1574,17 +1858,18 @@ function buildSceneGeometry(context) {
   const { targetBuildings, linkedServices, modeling } = context;
   const buildingEntries = [];
   const sceneMeshes = [];
-  const service3Guidance = linkedServices.service3?.spatialGuidance || {};
+  const spatialContext = linkedServices.service3 || linkedServices.uploadedSceneContext || null;
+  const service3Guidance = spatialContext?.spatialGuidance || {};
   const totalWidth = targetBuildings.reduce((sum, building) => sum + building.width, 0);
   const maxDepth = targetBuildings.reduce((sum, building) => Math.max(sum, building.depth), 0);
   const districtTargetCount = Math.max(service3Guidance.buildingCount || 0, targetBuildings.length + 2);
   const districtWidth = Math.max(totalWidth + districtTargetCount * 6 + 34, 84);
   const districtDepth = Math.max(maxDepth * 2.4 + 42 + (service3Guidance.publicSpaceCount || 0) * 4, 72);
-  const terrainRelief = linkedServices.service3?.terrainSummary?.reliefMeters
-    ? Math.min(Math.max(normalizeFloat(linkedServices.service3.terrainSummary.reliefMeters, 3) / 12, 1.2), 8)
+  const terrainRelief = spatialContext?.terrainSummary?.reliefMeters
+    ? Math.min(Math.max(normalizeFloat(spatialContext.terrainSummary.reliefMeters, 3) / 12, 1.2), 8)
     : (context.modeling.includeTerrain ? 2.2 : 0);
   const urbanPattern = normalizeText(service3Guidance.urbanPattern, 'Organic').toLowerCase();
-  const stylePalette = colorFromStyle(service3Guidance.style || context.project.architecturalStyle);
+  const stylePalette = colorFromStyle(service3Guidance.style || spatialContext?.urbanAnalysis?.detectedStyle || context.project.architecturalStyle);
   const contextBuildingColor = stylePalette.detail;
 
   if (modeling.modelScope === 'district') {
@@ -2357,7 +2642,7 @@ function buildBlenderStrategicViews(jobDir, scene, context, modelEntries = []) {
     includeTerrain: context.modeling.includeTerrain,
     includeMasterPlan: context.modeling.includeMasterPlan,
     generationMode: context.modeling.generationMode,
-    preserveDistrictContext: Boolean(context.linkedServices.service3)
+    preserveDistrictContext: Boolean(getSpatialContext(context))
       || context.modeling.modelScope === 'district'
       || context.modeling.includeMasterPlan,
     renderStyle: context.modeling.renderStyle,
@@ -4086,7 +4371,7 @@ router.post('/generate', (req, res, next) => {
     }
 
     const dedupedJobs = dedupeByJobId(linkedJobs);
-    const context = buildModelContext(req.body || {}, dedupedJobs, uploadedFilesSummary);
+    const context = await buildModelContext(req.body || {}, dedupedJobs, uploadedFilesSummary);
     context.runtime = {
       appBaseUrl: resolveAppBaseUrl(req),
     };

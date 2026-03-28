@@ -191,6 +191,58 @@ function parseCsvList(value) {
     .filter(Boolean);
 }
 
+const EXPORT_PREFERENCE_ALIASES = {
+  pdf: 'pdf',
+  word: 'word',
+  doc: 'word',
+  docx: 'word',
+  ppt: 'pptx',
+  pptx: 'pptx',
+  powerpoint: 'pptx',
+  html: 'html',
+  htm: 'html',
+  xls: 'xlsx',
+  xlsx: 'xlsx',
+  excel: 'xlsx',
+  zip: 'zip',
+  archive: 'zip',
+};
+
+function normalizeExportPreferences(value) {
+  const selected = Array.isArray(value) ? value : parseCsvList(value);
+  const normalized = new Set();
+
+  selected.forEach(item => {
+    const key = EXPORT_PREFERENCE_ALIASES[normalizeText(item).toLowerCase()];
+    if (key) normalized.add(key);
+  });
+
+  if (!normalized.size) {
+    ['pdf', 'word', 'pptx', 'html', 'xlsx', 'zip'].forEach(key => normalized.add(key));
+  }
+
+  return normalized;
+}
+
+function getDeliverableExportFamily(deliverable = {}) {
+  const ext = normalizeText(deliverable.ext || fileExt(deliverable.path).slice(1)).toLowerCase();
+  const label = normalizeText(deliverable.label).toLowerCase();
+
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'doc' || ext === 'docx') return 'word';
+  if (ext === 'ppt' || ext === 'pptx') return 'pptx';
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'xls' || ext === 'xlsx') return 'xlsx';
+  if (ext === 'zip') return 'zip';
+  if (ext === 'png' && label.includes('board')) return 'pptx';
+  return null;
+}
+
+function isDeliverableSelected(deliverable, selectedExports) {
+  const family = getDeliverableExportFamily(deliverable);
+  return family ? selectedExports.has(family) : false;
+}
+
 function slugify(value, fallback = 'item') {
   const slug = String(value || '')
     .normalize('NFKD')
@@ -1724,7 +1776,7 @@ const SERVICE_06_NARRATIVE_JSON_SCHEMA = {
   },
 };
 const SERVICE_06_TEXT_MODEL_OVERRIDES = {
-  gpt: process.env.SERVICE_06_OPENAI_MODEL || process.env.OPENAI_REPORT_MODEL || 'openai/gpt-5',
+  gpt: process.env.SERVICE_06_OPENAI_MODEL || process.env.OPENAI_REPORT_MODEL || 'openai/gpt-5-structured',
   gemini: process.env.SERVICE_06_GEMINI_MODEL || process.env.GEMINI_REPORT_MODEL || 'google/gemini-3.1-pro',
   claude: process.env.SERVICE_06_CLAUDE_MODEL || process.env.CLAUDE_REPORT_MODEL || 'anthropic/claude-4.5-sonnet',
 };
@@ -1773,6 +1825,9 @@ function buildDossierNarrativePromptBundle(context, linkedJobs, contentModel, do
     'Improve clarity, cohesion, and professional tone while staying faithful to the supplied draft structure.',
     languageInstruction,
     'Return valid JSON only.',
+    'Do not wrap the JSON in markdown fences.',
+    'Do not include comments, trailing commas, or explanatory text.',
+    'Use double-quoted JSON strings and ensure every array element is comma-separated.',
   ].join(' ');
 
   const userPrompt = [
@@ -1858,6 +1913,7 @@ async function synthesizeDossierNarrative(context, linkedJobs, contentModel, dos
 }
 
 function buildReadmeText(context, dossier, outputFiles, packageRootName) {
+  const includedFamilies = normalizeExportPreferences(outputFiles.map(file => file.ext));
   const lines = [
     `${context.brand.projectName}`,
     `${SERVICE_06_NAME}`,
@@ -2670,25 +2726,42 @@ function buildInfographicSvg(context, contentModel, dossier) {
 </svg>`;
 }
 
-async function buildInfographics(context, contentModel, dossier, mediaDir) {
+async function buildInfographics(context, contentModel, dossier, mediaDir, options = {}) {
   const svgPath = path.join(mediaDir, 'project_infographic.svg');
   const pngPath = path.join(mediaDir, 'project_infographic.png');
   const pdfPath = path.join(mediaDir, 'project_infographic.pdf');
+  const formats = new Set((Array.isArray(options.formats) && options.formats.length ? options.formats : ['svg', 'png', 'pdf'])
+    .map(item => normalizeText(item).toLowerCase()));
+  const needsSvgFile = formats.has('svg');
+  const needsPngFile = formats.has('png');
+  const needsPdfFile = formats.has('pdf');
   const svg = buildInfographicSvg(context, contentModel, dossier);
-  fs.writeFileSync(svgPath, svg);
-  await sharp(Buffer.from(svg)).png().toFile(pngPath);
+  if (needsSvgFile) fs.writeFileSync(svgPath, svg);
 
-  await new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 18 });
-    const stream = fs.createWriteStream(pdfPath);
-    doc.pipe(stream);
-    doc.image(pngPath, { fit: [560, 800], align: 'center', valign: 'center' });
-    doc.end();
-    stream.on('finish', resolve);
-    stream.on('error', reject);
-  });
+  let pngBuffer = null;
+  if (needsPngFile || needsPdfFile) {
+    pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  }
+  if (needsPngFile && pngBuffer) {
+    fs.writeFileSync(pngPath, pngBuffer);
+  }
+  if (needsPdfFile && pngBuffer) {
+    await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 18 });
+      const stream = fs.createWriteStream(pdfPath);
+      doc.pipe(stream);
+      doc.image(pngBuffer, { fit: [560, 800], align: 'center', valign: 'center' });
+      doc.end();
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+  }
 
-  return { svgPath, pngPath, pdfPath };
+  return {
+    svgPath: needsSvgFile ? svgPath : null,
+    pngPath: needsPngFile ? pngPath : null,
+    pdfPath: needsPdfFile ? pdfPath : null,
+  };
 }
 
 function buildPromoScript(context, dossier, contentModel, narrativeBundle = null) {
@@ -4856,14 +4929,16 @@ async function buildPdfDossier(dossier, context, images, outPath) {
     stream.on('error', reject);
   });
 }
-function collectZipEntries(rootDir, currentDir = rootDir, entries = []) {
+function collectZipEntries(rootDir, currentDir = rootDir, entries = [], excludedPaths = null) {
   const names = fs.readdirSync(currentDir, { withFileTypes: true });
   for (const entry of names) {
     const fullPath = path.join(currentDir, entry.name);
     if (entry.isDirectory()) {
-      collectZipEntries(rootDir, fullPath, entries);
+      collectZipEntries(rootDir, fullPath, entries, excludedPaths);
       continue;
     }
+    const resolved = path.resolve(fullPath);
+    if (excludedPaths && excludedPaths.has(resolved)) continue;
     entries.push({
       name: toWebPath(path.relative(path.dirname(rootDir), fullPath)),
       data: fs.readFileSync(fullPath),
@@ -6069,11 +6144,48 @@ router.post('/generate', (req, res, next) => {
       totalAssets: contentModel.counts.totalAssets,
       buildingCount: dossier.buildingRecords.length,
     };
+    const selectedExports = normalizeExportPreferences(context.project.exportPreferences);
+    const wantsPdf = selectedExports.has('pdf');
+    const wantsWord = selectedExports.has('word');
+    const wantsPptx = selectedExports.has('pptx');
+    const wantsHtml = selectedExports.has('html');
+    const wantsXlsx = selectedExports.has('xlsx');
+    const wantsZip = selectedExports.has('zip');
+    const rawGeneratedDeliverables = [];
+    const trackGeneratedDeliverable = (label, filePath, extOverride = null) => {
+      if (!filePath || !fs.existsSync(filePath)) return;
+      const ext = extOverride || fileExt(filePath).slice(1) || 'txt';
+      let safeLabel = label;
+      if (/[ÃÙØ]/.test(safeLabel)) {
+        const family = getDeliverableExportFamily({ label: safeLabel, ext });
+        const fallbackByFamily = {
+          pdf: 'PDF',
+          word: 'Word',
+          pptx: 'PPTX',
+          html: 'HTML',
+          xlsx: 'Excel',
+          zip: 'ZIP',
+        };
+        const fallback = fallbackByFamily[family];
+        if (fallback) safeLabel = safeLabel.replace(/\([^)]*\)$/, `(${fallback})`);
+      }
+      rawGeneratedDeliverables.push({
+        label: safeLabel,
+        path: filePath,
+        ext,
+        relativePath: toWebPath(path.relative(packageRoot, filePath)),
+      });
+    };
 
-    await buildWordDossier(dossier, context, dossierWordPath);
-    await buildPdfDossier(dossier, context, representativeImages, dossierPdfPath);
+    if (wantsWord) {
+      await buildWordDossier(dossier, context, dossierWordPath);
+      trackGeneratedDeliverable('Main Dossier (Word)', dossierWordPath);
+    }
+    if (wantsPdf) {
+      await buildPdfDossier(dossier, context, representativeImages, dossierPdfPath);
+      trackGeneratedDeliverable('Main Dossier (PDF)', dossierPdfPath);
+    }
 
-    const buildingOutputs = [];
     for (const building of dossier.buildingRecords) {
       const slug = slugify(building.name, 'building');
       const buildingWordPath = path.join(buildingDir, `${slug}.docx`);
@@ -6081,30 +6193,48 @@ router.post('/generate', (req, res, next) => {
       const buildingPptSubdir = path.join(presentationPptDir, 'Buildings');
       const buildingPptPath = path.join(buildingPptSubdir, `${slug}.pptx`);
       const buildingBoardDir = path.join(buildingBoardsDir, slug);
-      ensureDir(buildingPptSubdir);
-      ensureDir(buildingBoardDir);
       const imagePath = firstImageFromAssets(copiedAssets.filter(asset => asset.building === building.name));
-      await buildWordBuildingDocument(building, context, buildingWordPath);
-      await buildPdfBuildingDocument(building, context, imagePath, buildingPdfPath);
-      await buildArchitecturalPresentationPackage({
-        name: building.name,
-        summary: building.summary,
-      }, context, building.assets, buildingPptPath, buildingBoardDir, presentationOptions);
+      if (wantsWord) {
+        await buildWordBuildingDocument(building, context, buildingWordPath);
+        trackGeneratedDeliverable(`${building.name} (${labelForLanguage('Word', 'ÙˆÙˆØ±Ø¯', context.brand.languageMode)})`, buildingWordPath);
+      }
+      if (wantsPdf) {
+        await buildPdfBuildingDocument(building, context, imagePath, buildingPdfPath);
+        trackGeneratedDeliverable(`${building.name} (${labelForLanguage('PDF', 'Ø¨ÙŠ Ø¯ÙŠ Ø¥Ù', context.brand.languageMode)})`, buildingPdfPath);
+      }
+      if (wantsPptx) {
+        ensureDir(buildingPptSubdir);
+        ensureDir(buildingBoardDir);
+        await buildArchitecturalPresentationPackage({
+          name: building.name,
+          summary: building.summary,
+        }, context, building.assets, buildingPptPath, buildingBoardDir, presentationOptions);
+        trackGeneratedDeliverable(`${building.name} (${labelForLanguage('PPTX', 'ÙˆÙˆØ±Ø¯', context.brand.languageMode)})`, buildingPptPath);
+      }
 
-      buildingOutputs.push(
+      /* buildingOutputs.push(
         { label: `${building.name} (${labelForLanguage('Word', 'وورد', context.brand.languageMode)})`, path: buildingWordPath },
         { label: `${building.name} (${labelForLanguage('PDF', 'بي دي إف', context.brand.languageMode)})`, path: buildingPdfPath },
         { label: `${building.name} (${labelForLanguage('PPTX', 'بوربوينت', context.brand.languageMode)})`, path: buildingPptPath },
-      );
+      ); */
     }
 
-    const projectPresentation = await buildArchitecturalPresentationPackage({
+    let projectPresentation = null;
+    if (wantsPptx) projectPresentation = await buildArchitecturalPresentationPackage({
       name: context.brand.projectName,
       summary: dossier.executiveSummary,
     }, context, copiedAssets.filter(asset => asset.usage !== 'logo'), projectPptPath, projectBoardsDir, presentationOptions);
+    if (wantsPptx) {
+      trackGeneratedDeliverable('Project Summary (PPTX)', projectPptPath);
+      if (projectPresentation?.boardImages?.[0]) trackGeneratedDeliverable('Project Cover Board (PNG)', projectPresentation.boardImages[0]);
+      if (projectPresentation?.boardImages?.[6]) trackGeneratedDeliverable('Project Board Preview (PNG)', projectPresentation.boardImages[6]);
+    }
 
-    const infographicPaths = await buildInfographics(context, contentModel, dossier, mediaDir);
-    fs.writeFileSync(promoScriptPath, buildPromoScript(context, dossier, contentModel, narrativeSynthesis.narrative));
+    if (wantsPdf) {
+      const infographicPaths = await buildInfographics(context, contentModel, dossier, mediaDir, { formats: ['pdf'] });
+      if (infographicPaths?.pdfPath) trackGeneratedDeliverable('Infographic (PDF)', infographicPaths.pdfPath);
+    }
+    /* fs.writeFileSync(promoScriptPath, buildPromoScript(context, dossier, contentModel, narrativeSynthesis.narrative));
     fs.writeFileSync(captionsPath, buildSocialCaptions(context, contentModel, narrativeSynthesis.narrative));
     fs.writeFileSync(userGuidePath, [
       localizeTemplateText(`${context.brand.projectName} - User Guide`, `${context.brand.projectName} - دليل الاستخدام`, context.brand.languageMode),
@@ -6115,41 +6245,24 @@ router.post('/generate', (req, res, next) => {
       localizeTemplateText('4. Open 07_Digital_Portfolio/HTML_Website/index.html for the portfolio microsite.', '4. افتح 07_Digital_Portfolio/HTML_Website/index.html لعرض موف‚ع المحفظة الرف‚مية.', context.brand.languageMode),
       localizeTemplateText('5. Review 04_Reports/Data_Excel/generated_outputs.xlsx for the full output inventory.', '5. راجع 04_Reports/Data_Excel/generated_outputs.xlsx للاطلاع علف‰ ف‚ائمة المخرجات فƒاملة.', context.brand.languageMode),
       localizeTemplateText('6. Review 08_Media/Videos for script-ready promotional content.', '6. راجع 08_Media/Videos للوصول إلف‰ المحتوف‰ الإعلامي الجاف‡ز للنصوص.', context.brand.languageMode),
-    ].join('\n'));
+    ].join('\n')); */
 
-    buildPortfolioHtml(context, dossier, copiedAssets, portfolioHtmlPath);
+    if (wantsHtml) {
+      buildPortfolioHtml(context, dossier, copiedAssets, portfolioHtmlPath);
+      trackGeneratedDeliverable('Digital Portfolio (HTML)', portfolioHtmlPath);
+    }
 
-    const generatedDeliverables = [
-      { label: 'Main Dossier (PDF)', path: dossierPdfPath },
-      { label: 'Main Dossier (Word)', path: dossierWordPath },
-      { label: 'Project Summary (PPTX)', path: projectPptPath },
-      ...(projectPresentation?.boardImages?.[0]
-        ? [{ label: 'Project Cover Board (PNG)', path: projectPresentation.boardImages[0] }]
-        : []),
-      ...(projectPresentation?.boardImages?.[6]
-        ? [{ label: 'Project Board Preview (PNG)', path: projectPresentation.boardImages[6] }]
-        : []),
-      { label: 'Digital Portfolio (HTML)', path: portfolioHtmlPath },
-      { label: 'Infographic (SVG)', path: infographicPaths.svgPath },
-      { label: 'Infographic (PNG)', path: infographicPaths.pngPath },
-      { label: 'Infographic (PDF)', path: infographicPaths.pdfPath },
-      { label: 'Promo Script (TXT)', path: promoScriptPath },
-      { label: 'Social Captions (TXT)', path: captionsPath },
-      { label: 'User Guide (TXT)', path: userGuidePath },
-      ...buildingOutputs,
-    ].map(item => ({
-      ...item,
-      ext: fileExt(item.path).slice(1) || 'txt',
-      relativePath: toWebPath(path.relative(packageRoot, item.path)),
-    }));
+    const generatedDeliverables = rawGeneratedDeliverables.slice();
 
-    await buildExcelManifest(context, dossier, contentModel, generatedDeliverables, outputManifestPath);
-    generatedDeliverables.push({
+    if (wantsXlsx) {
+      await buildExcelManifest(context, dossier, contentModel, generatedDeliverables, outputManifestPath);
+      generatedDeliverables.push({
       label: localizeTemplateText('Generated Outputs Manifest (Excel)', 'فف‡رس المخرجات الناتجة (Excel)', context.brand.languageMode),
       path: outputManifestPath,
       ext: 'xlsx',
       relativePath: toWebPath(path.relative(packageRoot, outputManifestPath)),
     });
+    }
 
     const metadata = {
       jobId,
@@ -6203,36 +6316,42 @@ router.post('/generate', (req, res, next) => {
     };
 
     fs.writeFileSync(metadataSummaryPath, JSON.stringify(metadata, null, 2));
-    generatedDeliverables.push({
+    const packageSupportFiles = [];
+    packageSupportFiles.push({
       label: localizeTemplateText('Package Manifest (JSON)', 'بيانات الحزمة (JSON)', context.brand.languageMode),
       path: metadataSummaryPath,
       ext: 'json',
       relativePath: toWebPath(path.relative(packageRoot, metadataSummaryPath)),
     });
 
-    fs.writeFileSync(readmePath, buildReadmeText(context, dossier, generatedDeliverables, packageRootName));
-    generatedDeliverables.push({
+    fs.writeFileSync(readmePath, buildReadmeText(context, dossier, [...generatedDeliverables, ...packageSupportFiles], packageRootName));
+    packageSupportFiles.push({
       label: localizeTemplateText('README', 'دليل الحزمة', context.brand.languageMode),
       path: readmePath,
       ext: 'txt',
       relativePath: toWebPath(path.relative(packageRoot, readmePath)),
     });
 
-    const zipEntries = collectZipEntries(packageRoot);
-    fs.writeFileSync(bundleZipPath, createStoredZip(zipEntries));
+    const excludedZipPaths = new Set(
+      rawGeneratedDeliverables
+        .filter(file => !isDeliverableSelected(file, selectedExports))
+        .map(file => path.resolve(file.path)),
+    );
+    const outputFiles = generatedDeliverables.map(file => ({
+      label: file.label,
+      url: relOutputUrl(jobId, file.path),
+      ext: file.ext,
+    }));
 
-    const outputFiles = [
-      ...generatedDeliverables.map(file => ({
-        label: file.label,
-        url: relOutputUrl(jobId, file.path),
-        ext: file.ext,
-      })),
-      {
+    if (wantsZip) {
+      const zipEntries = collectZipEntries(packageRoot, packageRoot, [], excludedZipPaths);
+      fs.writeFileSync(bundleZipPath, createStoredZip(zipEntries));
+      outputFiles.push({
         label: localizeTemplateText('Delivery Bundle (ZIP)', 'حزمة التسليم (ZIP)', context.brand.languageMode),
         url: relOutputUrl(jobId, bundleZipPath),
         ext: 'zip',
-      },
-    ];
+      });
+    }
 
     const metaPath = path.join(jobDir, 'metadata.json');
     fs.writeFileSync(metaPath, JSON.stringify({ ...metadata, outputFiles }, null, 2));
@@ -6242,12 +6361,18 @@ router.post('/generate', (req, res, next) => {
       ext: 'json',
     });
 
+    const publicOutputFiles = outputFiles.filter(file => {
+      const family = getDeliverableExportFamily(file);
+      return family ? selectedExports.has(family) : false;
+    });
+    fs.writeFileSync(metaPath, JSON.stringify({ ...metadata, outputFiles: publicOutputFiles }, null, 2));
+
     if (jobRecord && jobRecord.save) {
       try {
         jobRecord.status = 'done';
-        jobRecord.outputFiles = outputFiles;
+        jobRecord.outputFiles = publicOutputFiles;
         jobRecord.completedAt = new Date();
-        jobRecord.metadata = { ...metadata, outputFiles };
+        jobRecord.metadata = { ...metadata, outputFiles: publicOutputFiles };
         await jobRecord.save();
       } catch (error) {
         // Ignore optional persistence failures.
@@ -6260,8 +6385,8 @@ router.post('/generate', (req, res, next) => {
       serviceName: SERVICE_06_NAME,
       provider: narrativeSynthesis.provider || 'local-packaging',
       model: narrativeSynthesis.model || 'documentation-media-pipeline-v1',
-      preview: buildResponsePreview(context, dossier, contentModel, outputFiles),
-      outputFiles,
+      preview: buildResponsePreview(context, dossier, contentModel, publicOutputFiles),
+      outputFiles: publicOutputFiles,
       packageRoot: `/outputs/${jobId}/${packageRootName}`,
       warnings: metadata.warnings,
     });

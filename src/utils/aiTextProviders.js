@@ -7,6 +7,9 @@ try {
 
 const { resolveAiModelDescriptor } = require('./aiModels');
 
+const STRUCTURED_GPT_API_MODEL = 'openai/gpt-5-structured';
+const STRUCTURED_GPT_BASE_MODEL = 'gpt-5';
+
 function normalizeReplicateText(output) {
   if (Array.isArray(output)) {
     return output.map(item => (typeof item === 'string' ? item : JSON.stringify(item))).join('').trim();
@@ -49,26 +52,45 @@ function buildReplicateAttempts(systemPrompt, userPrompt, descriptor, options = 
   const temperature = options.temperature ?? 0.3;
   const maxTokens = options.maxTokens ?? 4000;
   const promptOnly = `${systemPrompt}\n\n${userPrompt}`;
+  const structuredJsonSchema = options.jsonSchema
+    ? {
+        format: {
+          type: 'json_schema',
+          name: options.schemaName || 'structured_output',
+          schema: options.jsonSchema,
+        },
+      }
+    : null;
 
   if (descriptor.selectedKey === 'gpt') {
+    const baseInput = {
+      reasoning_effort: options.reasoningEffort || 'minimal',
+      verbosity: options.verbosity || 'low',
+      max_output_tokens: maxTokens,
+    };
+    const structuredInput = structuredJsonSchema && String(descriptor.apiModel || '').includes('gpt-5-structured')
+      ? {
+          model: options.structuredModel || STRUCTURED_GPT_BASE_MODEL,
+          json_schema: structuredJsonSchema,
+        }
+      : {};
+
     return [
       {
         apiModel: descriptor.apiModel,
         input: {
+          ...baseInput,
+          ...structuredInput,
           instructions: systemPrompt,
           prompt: userPrompt,
-          reasoning_effort: options.reasoningEffort || 'minimal',
-          verbosity: options.verbosity || 'low',
-          max_output_tokens: maxTokens,
         },
       },
       {
         apiModel: descriptor.apiModel,
         input: {
+          ...baseInput,
+          ...structuredInput,
           prompt: promptOnly,
-          reasoning_effort: options.reasoningEffort || 'minimal',
-          verbosity: options.verbosity || 'low',
-          max_output_tokens: maxTokens,
         },
       },
     ];
@@ -194,11 +216,20 @@ async function repairStructuredJson(rawText, descriptor, parseJson, options = {}
     rawText,
   ].join('\n\n');
 
-  const repairResult = await generateWithReplicate(repairSystem, repairUser, descriptor, {
+  const repairDescriptor = options.jsonSchema
+    ? {
+        ...resolveAiModelDescriptor('gpt'),
+        apiModel: STRUCTURED_GPT_API_MODEL,
+      }
+    : descriptor;
+
+  const repairResult = await generateWithReplicate(repairSystem, repairUser, repairDescriptor, {
     temperature: 0,
     maxTokens: Math.max(1200, Math.min(options.maxTokens ?? 4000, 6000)),
     timeoutMs: options.timeoutMs ? Math.min(options.timeoutMs, 120000) : 120000,
     jsonSchema: options.jsonSchema,
+    structuredModel: STRUCTURED_GPT_BASE_MODEL,
+    schemaName: 'repaired_structured_output',
   });
 
   return {
@@ -209,12 +240,17 @@ async function repairStructuredJson(rawText, descriptor, parseJson, options = {}
 }
 
 async function generateStructuredJson({ aiModel, systemPrompt, userPrompt, parseJson, modelOverrides, temperature, maxTokens, timeoutMs, jsonSchema }) {
-  const descriptor = resolveAiModelDescriptor(aiModel, { modelOverrides });
+  const baseDescriptor = resolveAiModelDescriptor(aiModel, { modelOverrides });
+  const descriptor = jsonSchema && baseDescriptor.selectedKey === 'gpt' && !String(baseDescriptor.apiModel || '').includes('gpt-5-structured')
+    ? { ...baseDescriptor, apiModel: STRUCTURED_GPT_API_MODEL }
+    : baseDescriptor;
   const result = await generateWithReplicate(systemPrompt, userPrompt, descriptor, {
     temperature,
     maxTokens,
     timeoutMs,
     jsonSchema,
+    structuredModel: STRUCTURED_GPT_BASE_MODEL,
+    schemaName: 'structured_output',
   });
 
   try {

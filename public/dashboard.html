@@ -1895,6 +1895,7 @@ function s4_bootstrap() {
     <div><label class="field-label">Ø§Ù„Ø·Ø±Ø§Ø² Ø§Ù„Ù…Ø¹Ù…Ø§Ø±ÙŠ</label><input id="s4-style" type="text" class="field-input" placeholder="Ù…Ø«Ø§Ù„: Ø­Ø¬Ø§Ø²ÙŠØŒ Ù†Ø¬Ø¯ÙŠØŒ Ø¹Ø«Ù…Ø§Ù†ÙŠ"></div>
     <div><label class="field-label">Ø§Ù„ÙˆØ¸ÙŠÙØ© Ø§Ù„Ù…Ø³ØªÙ‡Ø¯ÙØ©</label><input id="s4-target-function" type="text" class="field-input" placeholder="Ù…Ø«Ø§Ù„: Ù…ØªØ­ÙØŒ Ù…Ø±ÙƒØ² Ø²ÙˆØ§Ø±"></div>
     <div><label class="field-label">Ù†Ù…Ø· Ø§Ù„ÙƒØªØ§Ø¨Ø©</label><select id="s4-mode" class="field-input"><option value="academic">Academic Thesis Style</option><option value="professional">Professional Report Style</option><option value="government">Government Submission Style</option></select></div>
+    <div><label class="field-label">AI Model for Report Writing</label><select id="s4-ai-model" class="field-input"><option value="GPT 5">GPT 5</option><option value="Gemini 3.1 Pro">Gemini 3.1 Pro</option><option value="Claude Sonnet 4.5">Claude Sonnet 4.5</option></select></div>
     <div><label class="field-label">Ù…Ø±Ø¬Ø¹ Ù…ÙƒØ§Ù†ÙŠ / Ø¹Ù…Ø±Ø§Ù†ÙŠ</label><input id="s4-context-title" type="text" class="field-input" placeholder="Ù…Ù„Ø®Øµ Ù‚ØµÙŠØ± Ù„Ù„Ø³ÙŠØ§Ù‚"></div>
     <div class="col-span-2"><label class="field-label">Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„ØªØ±Ø§Ø«ÙŠØ©</label><textarea id="s4-significance" class="field-input resize-none" rows="2" placeholder="Ù…Ø§ Ù‡ÙŠ Ø£Ù‡Ù…ÙŠØ© Ø§Ù„Ù…Ù†Ø´Ø£Ø© ØªØ§Ø±ÙŠØ®ÙŠØ§Ù‹ ÙˆÙ…Ø¹Ù…Ø§Ø±ÙŠØ§Ù‹ ÙˆØ«Ù‚Ø§ÙÙŠØ§Ù‹ØŸ"></textarea></div>
     <div class="col-span-2"><label class="field-label">Ø§Ù„Ø£Ø¶Ø±Ø§Ø± ÙˆØ§Ù„Ù…Ø´Ø§ÙƒÙ„ Ø§Ù„Ø±Ø§Ù‡Ù†Ø©</label><textarea id="s4-damage" class="field-input resize-none" rows="2" placeholder="ØªØµØ¯Ø¹Ø§ØªØŒ ØªÙ„Ù Ø³Ø·ÙˆØ­ØŒ Ø¥Ø¶Ø§ÙØ§Øª ØºÙŠØ± Ù…ØªÙˆØ§ÙÙ‚Ø©..."></textarea></div>
@@ -2066,6 +2067,7 @@ async function s4_submit() {
     form.append('reportMode', document.getElementById('s4-mode')?.value || 'academic');
     form.append('language', document.getElementById('s4-language')?.value || 'arabic');
     form.append('depth', document.getElementById('s4-depth')?.value || 'medium');
+    form.append('aiModel', document.getElementById('s4-ai-model')?.value || 'GPT 5');
     form.append('historicalBackground', document.getElementById('s4-history')?.value || '');
     form.append('heritageSignificance', document.getElementById('s4-significance')?.value || '');
     form.append('conditionAndDamage', document.getElementById('s4-damage')?.value || '');
@@ -2321,6 +2323,7 @@ async function s4_submit() {
     form.append('reportMode', document.getElementById('s4-mode')?.value || 'academic');
     form.append('language', document.getElementById('s4-language')?.value || 'arabic');
     form.append('depth', document.getElementById('s4-depth')?.value || 'medium');
+    form.append('aiModel', document.getElementById('s4-ai-model')?.value || 'GPT 5');
     form.append('historicalBackground', document.getElementById('s4-history')?.value || '');
     form.append('heritageSignificance', document.getElementById('s4-significance')?.value || '');
     form.append('conditionAndDamage', document.getElementById('s4-damage')?.value || '');
@@ -2535,6 +2538,7 @@ function s4_bootstrap() {
     <div><label class="field-label">الطراز المعماري</label><input id="s4-style" type="text" class="field-input" placeholder="مثال: حجازي، نجدي، عثماني"></div>
     <div><label class="field-label">الوظيفة المستهدفة</label><input id="s4-target-function" type="text" class="field-input" placeholder="مثال: متحف، مركز زوار"></div>
     <div><label class="field-label">نمط الكتابة</label><select id="s4-mode" class="field-input"><option value="academic">صياغة أكاديمية</option><option value="professional">صياغة مهنية</option><option value="government">صياغة رسمية</option></select></div>
+    <div><label class="field-label">AI Model for Report Writing</label><select id="s4-ai-model" class="field-input"><option value="GPT 5">GPT 5</option><option value="Gemini 3.1 Pro">Gemini 3.1 Pro</option><option value="Claude Sonnet 4.5">Claude Sonnet 4.5</option></select></div>
     <div><label class="field-label">مرجع مكاني / عمراني</label><input id="s4-context-title" type="text" class="field-input" placeholder="ملخص قصير للسياق"></div>
     <div class="col-span-2"><label class="field-label">القيمة التراثية</label><textarea id="s4-significance" class="field-input resize-none" rows="2" placeholder="ما هي أهمية المنشأة تاريخيا ومعماريا وثقافيا؟"></textarea></div>
     <div class="col-span-2"><label class="field-label">الأضرار والمشاكل الراهنة</label><textarea id="s4-damage" class="field-input resize-none" rows="2" placeholder="تصدعات، تلف سطوح، إضافات غير متوافقة..."></textarea></div>
@@ -2543,6 +2547,12 @@ function s4_bootstrap() {
     <div class="col-span-2"><label class="field-label">السياق الجغرافي والعمراني</label><textarea id="s4-context" class="field-input resize-none" rows="2" placeholder="العلاقة بالحي والشارع والمشهد الحضري"></textarea></div>
     <div class="col-span-2"><label class="field-label">ملاحظات إضافية</label><textarea id="s4-notes" class="field-input resize-none" rows="2" placeholder="أي مراجع أو اشتراطات أو ملاحظات تنظيمية إضافية"></textarea></div>`;
   formCard.appendChild(extraFields);
+  const s4AiModelSelect = document.getElementById('s4-ai-model');
+  const s4SavedAiModel = localStorage.getItem('s4_ai_model');
+  if (s4AiModelSelect) {
+    if ([...s4AiModelSelect.options].some(option => option.value === s4SavedAiModel)) s4AiModelSelect.value = s4SavedAiModel;
+    s4AiModelSelect.onchange = () => localStorage.setItem('s4_ai_model', s4AiModelSelect.value);
+  }
 
   submitBtn.id = 's4-submit-btn';
   submitBtn.onclick = s4_submit;
@@ -2829,6 +2839,7 @@ async function s4_submit() {
     form.append('reportMode', document.getElementById('s4-mode')?.value || 'academic');
     form.append('language', document.getElementById('s4-language')?.value || 'arabic');
     form.append('depth', document.getElementById('s4-depth')?.value || 'medium');
+    form.append('aiModel', document.getElementById('s4-ai-model')?.value || 'GPT 5');
     form.append('historicalBackground', document.getElementById('s4-history')?.value || '');
     form.append('heritageSignificance', document.getElementById('s4-significance')?.value || '');
     form.append('conditionAndDamage', document.getElementById('s4-damage')?.value || '');
@@ -3230,6 +3241,7 @@ function s6_bootstrap() {
   extraFields.className = 'col-span-2 grid grid-cols-2 gap-4 mt-2';
   extraFields.innerHTML = `
     <div><label class="field-label">لغة الإخراج</label><select id="s6-language" class="field-input"><option value="arabic">العربية</option><option value="english">English</option></select></div>
+    <div><label class="field-label">AI Model for Report Writing</label><select id="s6-ai-model" class="field-input"><option value="GPT 5">GPT 5</option><option value="Gemini 3.1 Pro">Gemini 3.1 Pro</option><option value="Claude Sonnet 4.5">Claude Sonnet 4.5</option></select></div>
     <div><label class="field-label">الخط / Typography</label><input id="s6-typography" type="text" class="field-input" value="Cairo" placeholder="Cairo"></div>
     <div><label class="field-label">اللون الرئيسي</label><input id="s6-primary" type="text" class="field-input" value="#1A3554" placeholder="#1A3554"></div>
     <div><label class="field-label">لون الإبراز</label><input id="s6-accent" type="text" class="field-input" value="#DFAF67" placeholder="#DFAF67"></div>
@@ -3240,6 +3252,12 @@ function s6_bootstrap() {
     <div class="col-span-2"><label class="field-label">تفضيلات الهوية البصرية</label><textarea id="s6-branding" class="field-input resize-none" rows="3" placeholder="مثال: هوية رسمية محافظة، توازن بين الطابع الأكاديمي والعرض التنفيذي، ألوان تراثية، تخطيط قابل للطباعة..."></textarea></div>
     <div class="col-span-2"><label class="field-label">ملاحظات إضافية</label><textarea id="s6-notes" class="field-input resize-none" rows="3" placeholder="أي متطلبات خاصة بالتغليف، التوثيق، العرض التفاعلي، أو مخرجات الإعلام"></textarea></div>`;
   formCard.appendChild(extraFields);
+  const s6AiModelSelect = document.getElementById('s6-ai-model');
+  const s6SavedAiModel = localStorage.getItem('s6_ai_model');
+  if (s6AiModelSelect) {
+    if ([...s6AiModelSelect.options].some(option => option.value === s6SavedAiModel)) s6AiModelSelect.value = s6SavedAiModel;
+    s6AiModelSelect.onchange = () => localStorage.setItem('s6_ai_model', s6AiModelSelect.value);
+  }
 
   submitBtn.id = 's6-submit-btn';
   submitBtn.onclick = s6_submit;
@@ -3369,6 +3387,7 @@ async function s6_submit() {
     form.append('consultantTeam', document.getElementById('s6-team')?.value || '');
     form.append('preparationDate', document.getElementById('s6-date')?.value || '');
     form.append('languageMode', document.getElementById('s6-language')?.value || 'arabic');
+    form.append('aiModel', document.getElementById('s6-ai-model')?.value || 'GPT 5');
     form.append('typography', document.getElementById('s6-typography')?.value || 'Cairo');
     form.append('primaryColor', document.getElementById('s6-primary')?.value || '#1A3554');
     form.append('accentColor', document.getElementById('s6-accent')?.value || '#DFAF67');

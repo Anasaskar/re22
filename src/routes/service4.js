@@ -42,6 +42,10 @@ const Job = (() => {
   }
 })();
 
+const { normalizeAiModel, getAiModelLabel } = require('../utils/aiModels');
+const { generateStructuredJson } = require('../utils/aiTextProviders');
+const { parseModelJsonObject } = require('../utils/structuredJson');
+
 const router = express.Router();
 
 const SERVICE_04_NAME = 'Automated Academic Reporting';
@@ -1564,6 +1568,8 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
       language: normalizeText(input.language, 'arabic').toLowerCase() === 'english' ? 'english' : 'arabic',
       depth: normalizeText(input.depth, 'medium'),
       standardsProfile: normalizeText(input.standardProfile, 'both'),
+      aiModel: normalizeAiModel(input.aiModel, 'gpt'),
+      aiModelLabel: getAiModelLabel(input.aiModel, 'gpt'),
     },
     linkedServices: {
       service1,
@@ -1588,13 +1594,7 @@ function buildModelContext(input, linkedJobs, uploadedFilesSummary) {
 }
 
 function parseJsonResponse(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) throw new Error('Empty model response.');
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1].trim() : trimmed;
-  const jsonChunk = candidate.match(/\{[\s\S]*\}/);
-  return JSON.parse(jsonChunk ? jsonChunk[0] : candidate);
+  return parseModelJsonObject(text);
 }
 
 function buildPromptBundle(context) {
@@ -1654,8 +1654,7 @@ function buildPromptBundle(context) {
     typeProfile.emphasis,
     'Organize the report into the requested sections and keep the writing formal, evidence-based, and heritage-aware.',
     'Do not reuse the same structure across documentation, academic, and feasibility report types.',
-    'For standards and compliance, discuss framework relevance, likely alignment, and any validation still required.',
-    'For sustainability, address environmental, social, and economic dimensions where relevant.',
+    'For standards and compliance, discuss framework relevance, likely alignment, and any validation still required inside the narrative sections and recommendations. The detailed standards checklist and sustainability matrix will be completed from the supplied frameworks separately.',
     'Return only this JSON shape:',
     JSON.stringify({
       title: 'string',
@@ -1667,17 +1666,6 @@ function buildPromptBundle(context) {
         title: 'section title',
         body: 'section body',
         keyPoints: ['bullet 1', 'bullet 2'],
-      }],
-      standardsChecklist: [{
-        framework: 'string',
-        principle: 'string',
-        application: 'string',
-        status: 'aligned | partial | pending verification',
-      }],
-      sustainabilityMatrix: [{
-        dimension: 'environmental/social/economic',
-        consideration: 'string',
-        projectResponse: 'string',
       }],
       implementationRecommendations: [{
         phase: 'string',
@@ -1706,7 +1694,7 @@ async function generateWithOpenAI(context) {
 
   const { systemPrompt, userPrompt } = buildPromptBundle(context);
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const model = process.env.SERVICE_04_OPENAI_MODEL || 'gpt-4o-mini';
+  const model = process.env.SERVICE_04_OPENAI_MODEL || 'openai/gpt-5';
 
   const completion = await client.chat.completions.create({
     model,
@@ -2098,41 +2086,99 @@ function ensureReportShape(report, context) {
   };
 }
 
+const SERVICE_04_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'executiveSummary', 'abstract', 'keywords', 'sections', 'implementationRecommendations', 'references', 'appendixSuggestions'],
+  properties: {
+    title: { type: 'string' },
+    executiveSummary: { type: 'string' },
+    abstract: { type: 'string' },
+    keywords: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    sections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'title', 'body', 'keyPoints'],
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          body: { type: 'string' },
+          keyPoints: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+        },
+      },
+    },
+    implementationRecommendations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['phase', 'priority', 'recommendation', 'deliverable'],
+        properties: {
+          phase: { type: 'string' },
+          priority: { type: 'string' },
+          recommendation: { type: 'string' },
+          deliverable: { type: 'string' },
+        },
+      },
+    },
+    references: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'year', 'note'],
+        properties: {
+          title: { type: 'string' },
+          year: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+    },
+    appendixSuggestions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+};
+const SERVICE_04_MODEL_OVERRIDES = {
+  gpt: process.env.SERVICE_04_OPENAI_MODEL || process.env.OPENAI_REPORT_MODEL || 'openai/gpt-5',
+  gemini: process.env.SERVICE_04_GEMINI_MODEL || process.env.GEMINI_REPORT_MODEL || 'google/gemini-3.1-pro',
+  claude: process.env.SERVICE_04_CLAUDE_MODEL || process.env.CLAUDE_REPORT_MODEL || 'anthropic/claude-4.5-sonnet',
+};
+
 async function synthesizeReport(context) {
-  const preferredProvider = normalizeText(process.env.SERVICE_04_PROVIDER, 'auto').toLowerCase();
-  const providers = preferredProvider === 'openai'
-    ? ['openai', 'replicate']
-    : preferredProvider === 'replicate'
-      ? ['replicate', 'openai']
-      : ['replicate', 'openai'];
+  const { systemPrompt, userPrompt } = buildPromptBundle(context);
+  const result = await generateStructuredJson({
+    aiModel: context.report.aiModel,
+    systemPrompt,
+    userPrompt,
+    parseJson: parseJsonResponse,
+    modelOverrides: SERVICE_04_MODEL_OVERRIDES,
+    temperature: 0.3,
+    maxTokens: 4500,
+    timeoutMs: 180000,
+    jsonSchema: SERVICE_04_JSON_SCHEMA,
+  });
 
-  const failures = [];
-
-  for (const provider of providers) {
-    try {
-      const result = provider === 'openai'
-        ? await generateWithOpenAI(context)
-        : await generateWithReplicate(context);
-
-      if (!reportMatchesRequestedLanguage(result.report, context.report.language)) {
-        throw new Error(`Generated ${provider} report did not match requested language: ${context.report.language}.`);
-      }
-
-      return {
-        provider: result.provider,
-        model: result.model,
-        report: ensureReportShape(result.report, context),
-      };
-    } catch (error) {
-      failures.push(`${provider}: ${error.message}`);
-    }
+  if (!reportMatchesRequestedLanguage(result.json, context.report.language)) {
+    throw new Error(`Generated report did not match requested language: ${context.report.language}.`);
   }
 
   return {
-    provider: 'template',
-    model: 'local-template',
-    report: ensureReportShape(buildTemplateReport(context), context),
-    warnings: failures,
+    aiModel: context.report.aiModel,
+    aiModelLabel: context.report.aiModelLabel,
+    provider: result.provider,
+    model: result.model,
+    report: ensureReportShape(result.json, context),
+    warnings: [],
   };
 }
 
@@ -2816,6 +2862,8 @@ router.post('/generate', (req, res, next) => {
         language: context.report.language,
         depth: context.report.depth,
         standardProfile: context.report.standardsProfile,
+        aiModel: context.report.aiModelLabel,
+        aiModelKey: context.report.aiModel,
       },
       project: exportContext.project,
       linkedJobs: dedupedJobs.map(job => ({
@@ -2906,3 +2954,5 @@ router.get('/job/:jobId', async (req, res) => {
 });
 
 module.exports = router;
+
+

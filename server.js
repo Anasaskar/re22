@@ -22,7 +22,10 @@ app.use((req, res, next) => {
 // ── Static files ──────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
-app.use('/outputs', express.static(path.join(__dirname, 'public/outputs')));
+app.use('/outputs', (req, res, next) => {
+    res.set('Content-Disposition', 'attachment');
+    next();
+}, express.static(path.join(__dirname, 'public/outputs')));
 
 // ── API Routes ────────────────────────────────────────────────────────────
 app.use('/api/service1', require('./src/routes/service1'));

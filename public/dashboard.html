@@ -998,7 +998,7 @@ function s1_showResults(data, fileNames){
   for(const f of data.outputFiles){
     const ext = f.ext || f.url.split('.').pop();
     const a = document.createElement('a');
-    a.href = f.url; a.download = '';
+    a.href = f.url; a.download = f.url.split('/').pop() || (f.ext || 'file');
     a.className = ['pdf','docx','json'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${icons[ext]||'📁'}</span><span>${f.label}</span>`;
     dlContainer.appendChild(a);
@@ -1526,7 +1526,7 @@ function s2_showResults(data){
   for(const f of data.outputFiles){
     const ext = f.ext || f.url.split('.').pop();
     const a = document.createElement('a');
-    a.href = f.url; a.download = '';
+    a.href = f.url; a.download = f.url.split('/').pop() || (f.ext || 'file');
     a.className = ['pdf','docx'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${icons[ext]||'📁'}</span><span>${f.label}</span>`;
     dlContainer.appendChild(a);
@@ -2159,7 +2159,7 @@ function s3_showResults(data) {
     const ext = f.ext || f.url.split('.').pop();
     const a = document.createElement('a');
     a.href = f.url;
-    a.download = '';
+    a.download = f.url.split('/').pop() || (f.ext || 'file');
     a.className = ['pdf','docx','kml','kmz','geojson','html'].includes(ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${f.icon || icons[ext] || '📁'}</span><span>${f.label}</span>`;
     dlContainer.appendChild(a);
@@ -2695,7 +2695,7 @@ function s4_showResults(data) {
   for (const file of (data.outputFiles || [])) {
     const a = document.createElement('a');
     a.href = file.url;
-    a.download = '';
+    a.download = file.url.split('/').pop() || `${(file.ext || 'file')}`;
     a.className = ['pdf','docx','pptx','xlsx'].includes(file.ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${(file.ext || 'file').toUpperCase()}</span><span>${file.label}</span>`;
     downloads.appendChild(a);
@@ -2957,7 +2957,7 @@ function s4_showResults(data) {
   for (const file of (data.outputFiles || [])) {
     const a = document.createElement('a');
     a.href = file.url;
-    a.download = '';
+    a.download = file.url.split('/').pop() || `${(file.ext || 'file')}`;
     a.className = ['pdf','docx','pptx','xlsx'].includes(file.ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${(file.ext || 'file').toUpperCase()}</span><span>${file.label}</span>`;
     downloads.appendChild(a);
@@ -3496,7 +3496,7 @@ function s4_showResults(data) {
   for (const file of (data.outputFiles || [])) {
     const a = document.createElement('a');
     a.href = file.url;
-    a.download = '';
+    a.download = file.url.split('/').pop() || `${(file.ext || 'file')}`;
     a.className = ['pdf','docx','pptx','xlsx'].includes(file.ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${(file.ext || 'file').toUpperCase()}</span><span>${file.label}</span>`;
     downloads.appendChild(a);
@@ -4051,7 +4051,7 @@ function s6_showResults(data) {
   for (const file of (data.outputFiles || [])) {
     const a = document.createElement('a');
     a.href = file.url;
-    a.download = '';
+    a.download = file.url.split('/').pop() || `${(file.ext || 'file')}`;
     a.className = ['pdf', 'docx', 'pptx', 'xlsx', 'html', 'png', 'zip'].includes(file.ext) ? 'dl-btn primary' : 'dl-btn';
     a.innerHTML = `<span>${(file.ext || 'file').toUpperCase()}</span><span>${file.label}</span>`;
     downloads.appendChild(a);

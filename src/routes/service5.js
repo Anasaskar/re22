@@ -334,8 +334,16 @@ function materialProfileFromStyle(style) {
 }
 
 function getBlenderPath() {
+  // Normalize env var: if it points to a directory, append blender.exe
+  let envPath = process.env.BLENDER_PATH || '';
+  if (envPath && !envPath.toLowerCase().endsWith('.exe')) {
+    envPath = path.join(envPath, 'blender.exe');
+  }
+
   const candidates = [
-    process.env.BLENDER_PATH,
+    envPath,
+    'C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe',
+    'C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe',
     'C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe',
     'C:\\Program Files\\Blender Foundation\\Blender 4.1\\blender.exe',
     'C:\\Program Files\\Blender Foundation\\Blender 4.0\\blender.exe',

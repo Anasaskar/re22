@@ -119,6 +119,194 @@ function getFunctionLabel(funcKey) {
   return FUNCTION_LABELS[funcKey] || funcKey || 'adaptive reuse destination';
 }
 
+const SERVICE_02_PROMPT_DEFAULTS = {
+  analysis: {
+    systemPrompt: 'You are an expert architectural heritage rehabilitation analyst. Identify the original architectural character of an existing building and explain what should be preserved during rehabilitation or adaptive reuse. Always respond with valid JSON only.',
+    userPromptTemplate: `Analyze these reference images of a building.
+Identify:
+1) The building's architectural character and style
+2) The key visible elements that define its identity (massing, facade rhythm, materials, openings, ornaments, roofline, structural cues)
+3) The heritage value and rehabilitation potential
+4) Guidance for adaptive reuse while preserving the original character
+
+User selected style: [SELECTED_STYLE]. Building function: [BUILDING_TYPE].
+
+Return ONLY this JSON structure, no other text:
+{ "detectedStyle": "...", "confidence": "High/Medium/Low", "elements": ["..."], "heritageValue": "...", "notes": "...", "reuseGuidance": "..." }`,
+  },
+  generation: {
+    basePromptTemplate: `Generate a realistic architectural rehabilitation output for a heritage building adapted for contemporary use as [PROPOSED_USE] while preserving its original identity.
+The selected architectural style is [ARCHITECTURAL_STYLE].
+The design must clearly reflect the visual language, material character, proportions, decorative treatment, and architectural identity of the selected style.
+The requested output view is [REQUESTED_VIEW].
+You must generate only the requested view type and not any other view.
+
+View control rules:
+- If the requested view is FRONT, generate a true front facade with the main entrance composition and principal architectural identity.
+- If the requested view is REAR, generate a true back facade. It must look like the rear side of the building, with simpler composition, reduced ceremonial emphasis, secondary openings, and no main public entrance. Do not generate another front facade.
+- If the requested view is LEFT SIDE, generate a true left-side architectural elevation. Show the building from the left side with visible side massing, side-wall composition, depth, and believable secondary facade treatment. Do not generate another front facade.
+- If the requested view is RIGHT SIDE, generate a true right-side architectural elevation. Show the building from the right side with visible side massing, side-wall composition, depth, and believable secondary facade treatment. Do not generate another front facade.
+- If the requested view is AERIAL, generate a true oblique bird's-eye view showing the overall massing, roofscape, courtyard organization, and spatial layout from above.
+- If the requested view is INTERIOR, generate a true interior architectural view such as a courtyard, hall, or internal heritage space. Do not generate a facade or aerial image.
+- If the requested view is NIGHT, generate a true night architectural view with evening atmosphere and warm architectural lighting.
+- If the requested view is FLOOR PLAN, generate a true 2D top-down architectural floor plan only. It must be flat, drawn from above, and clearly show walls, room layout, doors, circulation, courtyard organization, and spatial relationships. Do not generate an interior render, do not generate an aerial view, do not generate a facade, and do not generate any 3D scene or perspective image.
+
+Strict output constraints:
+- Do not confuse side views with front views.
+- Do not generate a decorative front facade when REAR, LEFT SIDE, or RIGHT SIDE is requested.
+- Do not generate an interior or aerial image when FLOOR PLAN is requested.
+- Do not generate a floor plan when a facade, aerial, interior, or night view is requested.
+- Do not generate multiple view types in one image.
+- The image must clearly and unambiguously match the requested view only.
+
+Stylistic and heritage constraints:
+- Preserve the heritage character of the building.
+- Keep the architecture realistic, coherent, and presentation-ready.
+- Use appropriate traditional materials, ornamental details, openings, and facade rhythm according to the selected style.
+- Avoid fantasy elements, avoid unrelated modern forms, avoid excessive glass, and avoid exaggerated ornamentation that breaks authenticity.
+
+Liveliness and atmosphere:
+- Make the scene feel lively and inhabited in a subtle, elegant, and realistic way.
+- Include a few people, soft greenery, potted plants, palm trees or region-appropriate vegetation, and calm contextual activity where appropriate.
+- Keep the architecture as the main focus.
+- Do not overcrowd the image.
+- If the requested view is FLOOR PLAN, make it visually rich in a flat architectural way only by using furniture blocks, courtyard planting, labels or top-view scale figures if appropriate, while keeping it strictly top-down and readable.
+
+Quality goal:
+Create a professional, high-quality, architecturally believable output that clearly matches the requested view: [REQUESTED_VIEW], while preserving heritage identity and adding subtle life and realism.
+Any output that does not exactly match the requested view type is incorrect and must be rejected.
+[PROJECT_FACTS]
+[REFERENCE_ELEMENTS]`,
+    styleGuidance: {
+      Najdi: 'If the selected style is Najdi, emphasize mud-brick character, geometric openings, thick walls, and restrained traditional Najdi detailing.',
+      Hejazi: 'If the selected style is Hejazi, emphasize roshan-inspired wooden elements, urban heritage facade articulation, and refined decorative screens.',
+      Asiri: 'If the selected style is Asiri, emphasize stone or painted decorative character, regional material identity, and mountainous heritage expression where appropriate.',
+      'Contemporary heritage': 'If the selected style is Contemporary with heritage identity, preserve traditional references while introducing refined contemporary rehabilitation in a balanced and respectful way.',
+    },
+    viewTemplates: {
+      front: "Generate the FRONT facade view of the heritage building in [ARCHITECTURAL_STYLE] style. Show a clear main entrance composition with a frontal architectural perspective. Preserve the original facade identity, symmetry where appropriate, decorative elements, material character, and style-specific details. Make the facade elegant, realistic, and suitable for adaptive reuse as [PROPOSED_USE]. Make the scene lively and inhabited with subtle human activity. Include a few visitors near the entrance, soft landscape elements, potted plants, palms or style-appropriate planting, and refined outdoor details. Add movement and life, but keep the composition uncluttered and architecturally readable. This must be a true front facade architectural visualization, not an aerial view, not an interior, and not a side elevation.",
+      rear: "Generate the REAR facade of the heritage building in [ARCHITECTURAL_STYLE] style. This must be a true back-side architectural view, not a front facade. Make the composition simpler and less ceremonial than the front elevation. Avoid a grand main entrance, avoid overly formal symmetry, and show realistic secondary rear treatment with back openings, service-side architectural details, and reduced ornamentation while still preserving the selected architectural style. Make the scene lively and inhabited with subtle human presence, garden elements, potted plants, palms or context-appropriate greenery, and realistic outdoor life. Add a few people naturally using the rear space, but keep the image calm and elegant. The rear facade should still feel active and visually appealing without looking like the main public entrance. Do not generate another front facade. The requested output must clearly represent the back side of the building.",
+      right: "Generate the RIGHT SIDE elevation of the heritage building in [ARCHITECTURAL_STYLE] style. This must be a true right-side architectural facade, not a front-facing view. Show the building from the right side with believable side-wall composition, side openings, depth, massing, and secondary facade details that remain consistent with the selected architectural language. Make the scene lively and inhabited. Include a few people walking or standing naturally, soft greenery, potted plants, palm trees or context-appropriate landscape elements, and refined outdoor details. Add realistic signs of use and daily life while keeping the right-side facade clearly visible and readable. Do not generate another front facade. The requested output must clearly represent the right side of the building.",
+      left: "Generate the LEFT SIDE elevation of the heritage building in [ARCHITECTURAL_STYLE] style. This must be a true left-side architectural facade, not a front-facing view. Show the side massing, side windows, realistic wall depth, and coherent secondary architectural details that match the selected heritage design language. Make the scene lively, inhabited, and visually rich in a subtle way. Include a few people, potted plants, palm trees or context-appropriate vegetation, and soft outdoor environmental details. The human presence should feel natural and calm, and the greenery should support the scene without overpowering the architecture. Do not generate another front facade. The requested output must clearly represent the left side of the building.",
+      aerial: "Generate an AERIAL architectural view of the heritage building in [ARCHITECTURAL_STYLE] style from an oblique bird's-eye perspective. Show the overall building massing, roofscape, courtyard organization, upper-level details, and spatial layout clearly. Preserve the style-specific character, proportions, materials, and decorative language. Make the image lively and inhabited. Add subtle human presence in courtyards or surrounding areas, soft landscape features, palms or style-appropriate vegetation, potted plants, and realistic environmental context. The scene should feel alive and believable while keeping the architecture as the main visual focus. This must be a true aerial architectural visualization, not a front facade and not an interior view.",
+      interior: "Generate a realistic INTERIOR architectural view of the heritage building in [ARCHITECTURAL_STYLE] style, such as a courtyard, hall, or ceremonial interior space. Preserve arches, carved details, ceilings, traditional proportions, ornamental surfaces, and authentic material character according to the selected architectural style. Make the interior feel lively and inhabited. Include a few people interacting naturally in the space, along with indoor plants, courtyard greenery, soft decorative elements, and subtle signs of use. The atmosphere should feel warm, elegant, active, and believable without becoming crowded. This must be a true interior architectural visualization, not a floor plan, not a facade, and not an aerial view.",
+      night: "Generate a NIGHT architectural view of the heritage building in [ARCHITECTURAL_STYLE] style with warm, elegant lighting that highlights the facade details, openings, ornamental character, and material textures. Preserve the architectural identity of the selected style while creating a refined and presentation-ready nighttime atmosphere. Make the scene lively and inhabited. Include a few people, subtle night-time activity, palm trees or style-appropriate planting, potted plants, and realistic outdoor context. The building should feel active and welcoming at night, with balanced lighting and visible human life, but without overcrowding the image. This must be a true night view with believable evening atmosphere and architectural lighting.",
+      floorplan: "Generate a true 2D top-down architectural floor plan of a heritage building. The output must be a real floor plan viewed directly from above, not an interior perspective, not an aerial rendering, not a facade, and not a 3D scene. Clearly show walls, room layout, doors, circulation paths, courtyard organization, entrances, and spatial relationships. The plan should be readable, structured, and professionally composed like an architectural drawing. Reflect the selected architectural style in the spatial organization and plan logic. If the style is Najdi, use thick walls, courtyard-based layout, and restrained traditional organization. If the style is Hejazi, reflect urban heritage house planning, inner courtyard logic, and elegant room distribution. If the style is Aseeri, reflect regional spatial character and mountain-context planning where appropriate. If the style is Contemporary with heritage identity, preserve traditional references while introducing refined contemporary planning logic. Make the floor plan visually rich and lively in a presentation-friendly way without turning it into a perspective scene. Add subtle architectural presentation elements such as labeled spaces, furniture blocks, courtyard planting, trees or planters in open areas, water features if appropriate, and small human scale indicators from top view only. Keep these details clean, minimal, and organized so the drawing remains clear and readable. Use a clean top-down architectural representation with refined linework, balanced composition, realistic heritage planning logic, and strong graphic clarity. Do not generate perspective depth, shadows of a 3D render, eye-level interior views, exterior facades, or oblique aerial views. The final result must look like a true architectural floor plan from above.",
+      street: "Generate a human-scale STREET PERSPECTIVE of the heritage building in [ARCHITECTURAL_STYLE] style from pedestrian eye level. Show the arrival experience, facade depth, entrance approach, and surrounding urban context clearly while preserving the original architectural identity. Make the scene lively and inhabited with subtle human activity, soft greenery, potted plants, and style-appropriate landscape details. The image should feel realistic, elegant, and presentation-ready while keeping the architecture as the main subject. This must be a true street-level architectural visualization, not an aerial view, not an interior, and not a facade-only elevation.",
+      detail: "Generate a close-up FACADE DETAIL visualization of the heritage building in [ARCHITECTURAL_STYLE] style. Focus on craftsmanship, material texture, ornamental patterns, openings, screens, carvings, or decorative elements that define the building character. Preserve the original material authenticity and restoration quality while keeping the image realistic and presentation-ready. Add only subtle contextual life cues if visible, but keep the architectural detail as the clear focus. This must be a true architectural detail view, not a full facade, not an aerial view, and not an interior scene.",
+      adaptive_reuse: "Generate a realistic ADAPTIVE REUSE INTERIOR view of the heritage building in [ARCHITECTURAL_STYLE] style for use as [PROPOSED_USE]. Show how the original shell, arches, materials, and heritage details are preserved while the new use is inserted in a balanced, elegant, and believable way. Make the interior feel active and inhabited with a few people, subtle furnishings, soft planting, and refined presentation quality. The result must feel architecturally coherent, respectful of the original structure, and clearly suitable for the proposed new use. This must be a true interior adaptive reuse visualization, not a facade, not an aerial view, and not a floor plan.",
+      sectional: "Generate an architectural SECTIONAL PERSPECTIVE of the heritage building in [ARCHITECTURAL_STYLE] style. Show the building envelope, interior spatial hierarchy, floor-to-floor relationships, courtyard or hall organization, and adaptive reuse logic clearly. Preserve heritage character, material identity, and style-specific details while presenting the cut-through view in a refined architectural way. Keep the image presentation-ready, believable, and clearly readable as a sectional architectural visualization rather than a standard exterior render.",
+    },
+    negativePrompt: 'blurry, low quality, distorted, cartoon, sketch, anime, ugly, deformed, complete redesign, unrelated new building, demolition, futuristic tower, flat design, watermark, text overlay, overexposed, underexposed, noise, artifacts',
+  },
+  imageToPrompt: {
+    systemPrompt: `You are an expert architectural rehabilitation visualizer and Stable Diffusion XL prompt engineer.
+Your job is to look at a reference image of a heritage or traditional building and write a high-quality prompt for a credible rehabilitation or adaptive reuse visualization that preserves the original identity.
+Return ONLY the prompt, with no explanations, no preamble, and no quotes.`,
+    userPromptTemplate: `Analyze this architectural image and write a detailed Stable Diffusion XL prompt for a rehabilitation visualization.
+
+Include:
+- Existing architectural character and likely style
+- The building type and a plausible adaptive reuse direction
+- Materials, textures, facade rhythm, openings, roofline, and decorative details that should be preserved
+- View angle (front facade / aerial / interior / night / etc.)
+- Lighting conditions
+- Atmosphere and mood
+- A clear emphasis that this is a rehabilitation vision, not a totally new design
+
+End the prompt with: architectural rehabilitation visualization, photorealistic, presentation render, highly detailed
+
+Return ONLY the prompt text.`,
+  },
+};
+
+function cloneService2PromptDefaults() {
+  return JSON.parse(JSON.stringify(SERVICE_02_PROMPT_DEFAULTS));
+}
+
+function normalizeService2PromptText(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  return value.replace(/\r\n/g, '\n').trim();
+}
+
+function mergeService2PromptGroup(source = {}, defaults = {}) {
+  return Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => [
+      key,
+      typeof fallback === 'string'
+        ? normalizeService2PromptText(source[key], fallback)
+        : fallback,
+    ])
+  );
+}
+
+function buildService2PromptConfig(input = {}) {
+  const defaults = cloneService2PromptDefaults();
+  return {
+    analysis: {
+      systemPrompt: normalizeService2PromptText(input?.analysis?.systemPrompt, defaults.analysis.systemPrompt),
+      userPromptTemplate: normalizeService2PromptText(input?.analysis?.userPromptTemplate, defaults.analysis.userPromptTemplate),
+    },
+    generation: {
+      basePromptTemplate: normalizeService2PromptText(input?.generation?.basePromptTemplate, defaults.generation.basePromptTemplate),
+      styleGuidance: mergeService2PromptGroup(input?.generation?.styleGuidance, defaults.generation.styleGuidance),
+      viewTemplates: mergeService2PromptGroup(input?.generation?.viewTemplates, defaults.generation.viewTemplates),
+      negativePrompt: normalizeService2PromptText(input?.generation?.negativePrompt, defaults.generation.negativePrompt),
+    },
+    imageToPrompt: {
+      systemPrompt: normalizeService2PromptText(input?.imageToPrompt?.systemPrompt, defaults.imageToPrompt.systemPrompt),
+      userPromptTemplate: normalizeService2PromptText(input?.imageToPrompt?.userPromptTemplate, defaults.imageToPrompt.userPromptTemplate),
+    },
+  };
+}
+
+function parseService2PromptConfig(rawValue) {
+  if (!rawValue) return buildService2PromptConfig();
+  if (typeof rawValue === 'object') return buildService2PromptConfig(rawValue);
+
+  try {
+    return buildService2PromptConfig(JSON.parse(String(rawValue)));
+  } catch (error) {
+    throw new Error('Prompt configuration must be valid JSON.');
+  }
+}
+
+function renderService2PromptTemplate(template, replacements = {}) {
+  const normalizedTemplate = String(template || '').replace(/\r\n/g, '\n');
+  return normalizedTemplate.replace(/\[([A-Z0-9_]+)\]/g, (_, key) => {
+    const replacement = replacements[key];
+    return replacement == null ? '' : String(replacement);
+  });
+}
+
+function cleanService2PromptText(text = '') {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function buildService2StyleAnalysisPrompts(style, buildingType, promptConfig = buildService2PromptConfig()) {
+  return {
+    systemPrompt: promptConfig.analysis.systemPrompt,
+    userPrompt: cleanService2PromptText(
+      renderService2PromptTemplate(promptConfig.analysis.userPromptTemplate, {
+        SELECTED_STYLE: style || '',
+        BUILDING_TYPE: buildingType || '',
+      })
+    ),
+  };
+}
+
+function buildService2ImageToPromptPrompts(promptConfig = buildService2PromptConfig()) {
+  return {
+    systemPrompt: promptConfig.imageToPrompt.systemPrompt,
+    userPrompt: cleanService2PromptText(promptConfig.imageToPrompt.userPromptTemplate),
+  };
+}
+
 
 // ── Storage ───────────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '../../public/uploads');
@@ -146,7 +334,7 @@ function downloadFile(url, dest) {
 // ══════════════════════════════════════════════════════════════════
 // STEP 2 — GPT-4o on Replicate: Architectural Style Analysis from reference images
 // ══════════════════════════════════════════════════════════════════
-async function analyzeStyleWithGPT4o(imagePaths, style, buildingType) {
+async function analyzeStyleWithGPT4o(imagePaths, style, buildingType, promptConfig = buildService2PromptConfig()) {
   const rasterPaths = (imagePaths || []).filter(p =>
     RASTER_REFERENCE_EXTENSIONS.has(path.extname(p).toLowerCase())
   );
@@ -166,21 +354,12 @@ async function analyzeStyleWithGPT4o(imagePaths, style, buildingType) {
 
   // Convert local image files to base64 data URIs for Replicate
   const imageInputs = buildReferenceImageInputs(rasterPaths, 3);
+  const analysisPrompts = buildService2StyleAnalysisPrompts(style, buildingType, promptConfig);
 
   const output = await replicate.run('openai/gpt-4o', {
     input: {
-      system_prompt: 'You are an expert architectural heritage rehabilitation analyst. Identify the original architectural character of an existing building and explain what should be preserved during rehabilitation or adaptive reuse. Always respond with valid JSON only.',
-      prompt: `Analyze these reference images of a building.
-Identify:
-1) The building's architectural character and style
-2) The key visible elements that define its identity (massing, facade rhythm, materials, openings, ornaments, roofline, structural cues)
-3) The heritage value and rehabilitation potential
-4) Guidance for adaptive reuse while preserving the original character
-
-User selected style: ${style}. Building function: ${buildingType}.
-
-Return ONLY this JSON structure, no other text:
-{ "detectedStyle": "...", "confidence": "High/Medium/Low", "elements": ["..."], "heritageValue": "...", "notes": "...", "reuseGuidance": "..." }`,
+      system_prompt: analysisPrompts.systemPrompt,
+      prompt: analysisPrompts.userPrompt,
       image_input: imageInputs,
       max_completion_tokens: 400,
       temperature: 0.2,
@@ -1075,11 +1254,12 @@ function buildRehabilitationPrompt(view, styleKey, funcKey, area, floors, extra,
   ).replace(/,\s*,/g, ',').trim();
 }
 
-function buildStableRehabilitationPrompt(view, styleKey, funcKey, area, floors, extra, buildingName, styleAnalysis) {
+function buildStableRehabilitationPrompt(view, styleKey, funcKey, area, floors, extra, buildingName, styleAnalysis, promptConfig = buildService2PromptConfig()) {
   const styleLabel = getStyleLabel(styleKey);
   const funcLabel = getFunctionLabel(funcKey);
   const styleDetail = STYLE_DETAILS[styleKey] || '';
-  const styleGuidance = STYLE_PROMPT_GUIDANCE[styleLabel] || '';
+  const generationPromptConfig = promptConfig.generation || {};
+  const styleGuidance = generationPromptConfig.styleGuidance?.[styleLabel] || '';
   const referenceElements = styleAnalysis?.elements?.length
     ? `Use reference-informed cues such as ${styleAnalysis.elements.join(', ')} to keep the rehabilitation visually connected to the original building.`
     : '';
@@ -1104,46 +1284,22 @@ function buildStableRehabilitationPrompt(view, styleKey, funcKey, area, floors, 
     floors ? `Proposed floors: ${floors}.` : '',
     extra ? `Additional project requirements: ${extra}.` : '',
   ].filter(Boolean).join(' ');
-  const basePrompt = [
-    `Generate a realistic architectural rehabilitation output for a heritage building adapted for contemporary use as ${funcLabel} while preserving its original identity.`,
-    `The selected architectural style is ${styleLabel}.`,
-    'The design must clearly reflect the visual language, material character, proportions, decorative treatment, and architectural identity of the selected style.',
-    `The requested output view is ${requestedView}.`,
-    'You must generate only the requested view type and not any other view.',
-    'View control rules:',
-    '- If the requested view is FRONT, generate a true front facade with the main entrance composition and principal architectural identity.',
-    '- If the requested view is REAR, generate a true back facade. It must look like the rear side of the building, with simpler composition, reduced ceremonial emphasis, secondary openings, and no main public entrance. Do not generate another front facade.',
-    '- If the requested view is LEFT SIDE, generate a true left-side architectural elevation. Show the building from the left side with visible side massing, side-wall composition, depth, and believable secondary facade treatment. Do not generate another front facade.',
-    '- If the requested view is RIGHT SIDE, generate a true right-side architectural elevation. Show the building from the right side with visible side massing, side-wall composition, depth, and believable secondary facade treatment. Do not generate another front facade.',
-    '- If the requested view is AERIAL, generate a true oblique bird\'s-eye view showing the overall massing, roofscape, courtyard organization, and spatial layout from above.',
-    '- If the requested view is INTERIOR, generate a true interior architectural view such as a courtyard, hall, or internal heritage space. Do not generate a facade or aerial image.',
-    '- If the requested view is NIGHT, generate a true night architectural view with evening atmosphere and warm architectural lighting.',
-    '- If the requested view is FLOOR PLAN, generate a true 2D top-down architectural floor plan only. It must be flat, drawn from above, and clearly show walls, room layout, doors, circulation, courtyard organization, and spatial relationships. Do not generate an interior render, do not generate an aerial view, do not generate a facade, and do not generate any 3D scene or perspective image.',
-    'Strict output constraints:',
-    '- Do not confuse side views with front views.',
-    '- Do not generate a decorative front facade when REAR, LEFT SIDE, or RIGHT SIDE is requested.',
-    '- Do not generate an interior or aerial image when FLOOR PLAN is requested.',
-    '- Do not generate a floor plan when a facade, aerial, interior, or night view is requested.',
-    '- Do not generate multiple view types in one image.',
-    '- The image must clearly and unambiguously match the requested view only.',
-    'Stylistic and heritage constraints:',
-    '- Preserve the heritage character of the building.',
-    '- Keep the architecture realistic, coherent, and presentation-ready.',
-    '- Use appropriate traditional materials, ornamental details, openings, and facade rhythm according to the selected style.',
-    '- Avoid fantasy elements, avoid unrelated modern forms, avoid excessive glass, and avoid exaggerated ornamentation that breaks authenticity.',
-    'Liveliness and atmosphere:',
-    '- Make the scene feel lively and inhabited in a subtle, elegant, and realistic way.',
-    '- Include a few people, soft greenery, potted plants, palm trees or region-appropriate vegetation, and calm contextual activity where appropriate.',
-    '- Keep the architecture as the main focus.',
-    '- Do not overcrowd the image.',
-    '- If the requested view is FLOOR PLAN, make it visually rich in a flat architectural way only by using furniture blocks, courtyard planting, labels or top-view scale figures if appropriate, while keeping it strictly top-down and readable.',
-    'Quality goal:',
-    `Create a professional, high-quality, architecturally believable output that clearly matches the requested view: ${requestedView}, while preserving heritage identity and adding subtle life and realism.`,
-    'Any output that does not exactly match the requested view type is incorrect and must be rejected.',
-  ].join(' ');
-  const viewPrompt = (VIEW_PROMPT_TEMPLATES[view.id] || view.view || '')
-    .replace(/\[ARCHITECTURAL_STYLE\]/g, styleLabel)
-    .replace(/\[PROPOSED_USE\]/g, funcLabel);
+  const basePrompt = cleanService2PromptText(
+    renderService2PromptTemplate(generationPromptConfig.basePromptTemplate, {
+      ARCHITECTURAL_STYLE: styleLabel,
+      PROPOSED_USE: funcLabel,
+      REQUESTED_VIEW: requestedView,
+      PROJECT_FACTS: projectFacts,
+      REFERENCE_ELEMENTS: referenceElements,
+    })
+  );
+  const viewPrompt = cleanService2PromptText(
+    renderService2PromptTemplate(generationPromptConfig.viewTemplates?.[view.id] || view.view || '', {
+      ARCHITECTURAL_STYLE: styleLabel,
+      PROPOSED_USE: funcLabel,
+      REQUESTED_VIEW: requestedView,
+    })
+  );
 
   return [
     basePrompt,
@@ -1155,19 +1311,16 @@ function buildStableRehabilitationPrompt(view, styleKey, funcKey, area, floors, 
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
-async function engineerRehabilitationPromptWithGPT4o(style, buildingType, area, floors, specialReqs, buildingName, viewLabel, styleAnalysis) {
+async function engineerRehabilitationPromptWithGPT4o(style, buildingType, area, floors, specialReqs, buildingName, viewLabel, styleAnalysis, promptConfig = buildService2PromptConfig()) {
   const matchedView = VIEWS.find(v => v.labelEn === viewLabel) || { id: 'front', view: viewLabel };
   const engineeredPrompt = buildStableRehabilitationPrompt(
-    matchedView, style, buildingType, area, floors, specialReqs, buildingName, styleAnalysis
+    matchedView, style, buildingType, area, floors, specialReqs, buildingName, styleAnalysis, promptConfig
   );
   console.log(`[Prompt Builder] Using stable rehab prompt for: ${viewLabel}`);
   return engineeredPrompt;
 }
 
-const NEGATIVE_PROMPT =
-  'blurry, low quality, distorted, cartoon, sketch, anime, ugly, deformed, ' +
-  'complete redesign, unrelated new building, demolition, futuristic tower, flat design, ' +
-  'watermark, text overlay, overexposed, underexposed, noise, artifacts';
+const NEGATIVE_PROMPT = SERVICE_02_PROMPT_DEFAULTS.generation.negativePrompt;
 
 // ── PDF builder ───────────────────────────────────────────────────────────
 async function buildPdf(views, pdfPath, title) {
@@ -1282,6 +1435,24 @@ async function buildRehabilitationWord(views, styleKey, funcKey, area, floors, e
   fs.writeFileSync(docxPath, buf);
 }
 
+router.get('/prompt-config', (_req, res) => {
+  return res.json({
+    success: true,
+    defaults: buildService2PromptConfig(),
+    viewOrder: VIEWS.map(view => ({
+      id: view.id,
+      labelEn: view.labelEn,
+      labelAr: view.labelAr,
+    })),
+    styleGuidanceOrder: Object.keys(SERVICE_02_PROMPT_DEFAULTS.generation.styleGuidance),
+    placeholders: {
+      analysis: ['[SELECTED_STYLE]', '[BUILDING_TYPE]'],
+      generation: ['[ARCHITECTURAL_STYLE]', '[PROPOSED_USE]', '[REQUESTED_VIEW]', '[PROJECT_FACTS]', '[REFERENCE_ELEMENTS]'],
+      views: ['[ARCHITECTURAL_STYLE]', '[PROPOSED_USE]', '[REQUESTED_VIEW]'],
+    },
+  });
+});
+
 // POST /api/service2/generate
 // ══════════════════════════════════════════════════════════════════════════
 router.post('/generate', (req, res, next) => {
@@ -1299,6 +1470,7 @@ router.post('/generate', (req, res, next) => {
     buildingName = '',
     numViews     = '8',
     prompt       = '',
+    promptOverride = '',
   } = req.body || {};
 
   const jobId  = uuidv4();
@@ -1307,11 +1479,20 @@ router.post('/generate', (req, res, next) => {
 
   const viewCount = Math.min(parseInt(numViews) || DEFAULT_VIEW_COUNT, VIEWS.length);
   const viewsToRun = VIEWS.slice(0, viewCount);
+  let promptConfig;
+
+  try {
+    promptConfig = parseService2PromptConfig(req.body?.promptConfig);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
 
   try {
     const t0 = Date.now();
     const results = [];
     const floorCount = getFloorCount(floors);
+    const styleAnalysisPrompts = buildService2StyleAnalysisPrompts(style, buildingType, promptConfig);
+    const negativePrompt = promptConfig.generation?.negativePrompt || NEGATIVE_PROMPT;
 
     console.log('\n' + '═'.repeat(60));
     console.log(`🏛️  SERVICE 02 JOB  |  id: ${jobId}`);
@@ -1328,7 +1509,7 @@ router.post('/generate', (req, res, next) => {
     let styleAnalysis = null;
     console.log('\n[STEP 2] 🔍 GPT-4o/Replicate style analysis...');
     try {
-      styleAnalysis = await analyzeStyleWithGPT4o(refImagePaths, style, buildingType);
+      styleAnalysis = await analyzeStyleWithGPT4o(refImagePaths, style, buildingType, promptConfig);
       console.log(`         ✓ detected: ${styleAnalysis.detectedStyle} (${styleAnalysis.confidence})`);
     } catch(e) {
       console.warn('         ⚠ GPT-4o analysis skipped:', e.message);
@@ -1345,18 +1526,22 @@ router.post('/generate', (req, res, next) => {
       try {
         finalPrompt = await engineerRehabilitationPromptWithGPT4o(
           style, buildingType, area, floors, specialReqs,
-          buildingName, view.labelEn, styleAnalysis
+          buildingName, view.labelEn, styleAnalysis, promptConfig
         );
       } catch(e) {
         console.warn(`│  ⚠ GPT-4o prompt skipped: ${e.message}`);
       }
       // Fallback to built-in template if GPT-4o call fails
-      const fluxPrompt = (finalPrompt ||
-        buildRehabilitationPrompt(view, style, buildingType, area, floors, specialReqs, buildingName))
-        + (prompt ? `, ${prompt}` : '');
+      // If user provided a base prompt override, use it directly (full replacement)
+      const fluxPrompt = promptOverride
+        ? `${promptOverride}, ${view.view}${prompt ? `, ${prompt}` : ''}`
+        : (finalPrompt ||
+            buildRehabilitationPrompt(view, style, buildingType, area, floors, specialReqs, buildingName))
+          + (prompt ? `, ${prompt}` : '');
 
-
-      const generationPrompt = `${fluxPrompt}. Avoid: ${NEGATIVE_PROMPT}.`;
+      const generationPrompt = negativePrompt
+        ? `${fluxPrompt}. Avoid: ${negativePrompt}.`
+        : fluxPrompt;
       const aspectRatio = view.width > view.height ? '16:9' : '3:4';
       const shouldUseReferenceImages = !['floorplan', 'sectional'].includes(view.id);
       console.log(`│  Prompt: "${fluxPrompt.substring(0, 100)}..."`);
@@ -1480,6 +1665,16 @@ router.post('/generate', (req, res, next) => {
       floorPlansGenerated: planArtifacts.length,
       sectionsGenerated: 1,
       styleAnalysis,
+      promptConfig,
+      prompts: {
+        styleAnalysis: styleAnalysisPrompts,
+        negativePrompt,
+        imageGeneration: results.map(result => ({
+          id: result.id,
+          labelEn: result.labelEn,
+          prompt: result.prompt,
+        })),
+      },
       gpt4oEnabled: true,
       processedAt: new Date().toISOString(),
       totalTimeSec: ((Date.now()-t0)/1000).toFixed(1),
@@ -1556,8 +1751,16 @@ router.post('/image-to-prompt', (req, res, next) => {
   });
 }, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+  let promptConfig;
 
   try {
+    promptConfig = parseService2PromptConfig(req.body?.promptConfig);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  try {
+    const imageToPromptPrompts = buildService2ImageToPromptPrompts(promptConfig);
     const ext  = path.extname(req.file.path).slice(1).toLowerCase();
     const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
     const b64  = fs.readFileSync(req.file.path).toString('base64');
@@ -1567,23 +1770,8 @@ router.post('/image-to-prompt', (req, res, next) => {
 
     const output = await replicate.run('openai/gpt-4o', {
       input: {
-        system_prompt: `You are an expert architectural rehabilitation visualizer and Stable Diffusion XL prompt engineer.
-Your job is to look at a reference image of a heritage or traditional building and write a high-quality prompt for a credible rehabilitation or adaptive reuse visualization that preserves the original identity.
-Return ONLY the prompt, with no explanations, no preamble, and no quotes.`,
-        prompt: `Analyze this architectural image and write a detailed Stable Diffusion XL prompt for a rehabilitation visualization.
-
-Include:
-- Existing architectural character and likely style
-- The building type and a plausible adaptive reuse direction
-- Materials, textures, facade rhythm, openings, roofline, and decorative details that should be preserved
-- View angle (front facade / aerial / interior / night / etc.)
-- Lighting conditions
-- Atmosphere and mood
-- A clear emphasis that this is a rehabilitation vision, not a totally new design
-
-End the prompt with: architectural rehabilitation visualization, photorealistic, presentation render, highly detailed
-
-Return ONLY the prompt text.`,
+        system_prompt: imageToPromptPrompts.systemPrompt,
+        prompt: imageToPromptPrompts.userPrompt,
         image_input: [dataUri],
         max_completion_tokens: 300,
         temperature: 0.5,

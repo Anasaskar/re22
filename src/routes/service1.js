@@ -294,14 +294,17 @@ router.post('/enhance-prompt', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'No Arabic or English prompt was provided.' });
     }
 
+    const fixedPromptOverride = normalizePromptText(req.body && req.body.fixedPromptOverride);
+    const fixedPrompt = fixedPromptOverride || DEFAULT_RESTORATION_PROMPT;
+
     const enhancedPrompt = await enhancePromptWithGemini(customPrompt);
-    const finalPrompt = composeService1Prompt(DEFAULT_RESTORATION_PROMPT, enhancedPrompt);
+    const finalPrompt = composeService1Prompt(fixedPrompt, enhancedPrompt);
 
     return res.json({
       success: true,
       provider: 'replicate',
       model: REPLICATE_GEMINI_MODEL,
-      fixedPrompt: DEFAULT_RESTORATION_PROMPT,
+      fixedPrompt,
       customPrompt,
       enhancedPrompt,
       finalPrompt,
@@ -353,16 +356,17 @@ router.post('/restore', (req, res, next) => {
 
     const legacyPrompt = normalizePromptText(req.body && req.body.prompt);
     const customPrompt = normalizePromptText(req.body && req.body.customPrompt);
-    let fixedPrompt = DEFAULT_RESTORATION_PROMPT;
+    const fixedPromptOverride = normalizePromptText(req.body && req.body.fixedPromptOverride);
+    let fixedPrompt = fixedPromptOverride || DEFAULT_RESTORATION_PROMPT;
     let enhancedPrompt = '';
-    let finalPrompt = DEFAULT_RESTORATION_PROMPT;
-    let promptMode = 'fixed_only';
+    let finalPrompt = fixedPrompt;
+    let promptMode = fixedPromptOverride ? 'user_fixed_only' : 'fixed_only';
 
     if (customPrompt) {
       console.log(`[S1/GEMINI] Enhancing custom prompt with ${REPLICATE_GEMINI_MODEL} via Replicate...`);
       enhancedPrompt = await enhancePromptWithGemini(customPrompt);
       finalPrompt = composeService1Prompt(fixedPrompt, enhancedPrompt);
-      promptMode = 'fixed_plus_gemini';
+      promptMode = fixedPromptOverride ? 'user_fixed_plus_gemini' : 'fixed_plus_gemini';
     } else if (legacyPrompt) {
       fixedPrompt = '';
       finalPrompt = legacyPrompt;

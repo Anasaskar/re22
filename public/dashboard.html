@@ -133,10 +133,21 @@ select.field-input option{background:#102033}
         <div id="files-s1" class="mt-3 space-y-2 hidden"></div>
       </div>
 
-      <!-- Prompt for Nano Banana -->
-      <div class="hidden bg-panelDark border border-panelBorder rounded-2xl p-5">
-        <p class="text-textMuted text-xs mb-1.5">💬 وصف الترميم — Nano Banana Prompt</p>
-        <textarea id="s1-prompt" class="field-input resize-none" rows="11" dir="ltr" readonly>Carefully restore and clean this historic building while strictly preserving the original structure exactly as it appears in the image.
+      <!-- Fixed Prompt for Nano Banana (editable) -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">🍌 Nano Banana</span>
+            <p class="text-textMuted text-xs">Fixed Restoration Prompt — fully editable</p>
+          </div>
+          <button onclick="s1_resetPrompt()" title="Reset to default prompt"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset All
+          </button>
+        </div>
+        <textarea id="s1-prompt" class="field-input resize-y" rows="10" dir="ltr"
+          placeholder="Enter the restoration prompt that will be sent to Nano Banana on Replicate..."
+          oninput="s1_onPromptEdit()">Carefully restore and clean this historic building while strictly preserving the original structure exactly as it appears in the image.
 Do NOT change the camera angle, perspective, framing, or lighting.
 Do NOT reconstruct missing parts, invent details, or add any new decorations, ornaments, or architectural elements.
 
@@ -148,17 +159,20 @@ Only perform minimal restoration:
 
 Maintain the exact heritage style, authentic materials, and all existing architectural details exactly as in the original photo.
 Do not modernize the building and do not add or imagine any elements that are not clearly present in the image.</textarea>
+        <p id="s1-prompt-edited-badge" class="hidden mt-1.5 text-[11px] text-amber-400 flex items-center gap-1">
+          <i data-lucide="pencil" class="w-3 h-3"></i> Prompt edited — your version will be used
+        </p>
       </div>
 
       <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 space-y-3">
         <div>
-          <p class="text-textMuted text-xs mb-1.5">Arabic / English restoration note for Gemini</p>
-          <textarea id="s1-custom-prompt" class="field-input resize-none" rows="4" dir="auto" oninput="s1_handleCustomPromptInput()"
-            placeholder="Write extra restoration instructions in Arabic or English. Gemini will enhance them, then they will be merged with the fixed preservation prompt before Nano Banana runs."></textarea>
+          <p class="text-textMuted text-xs mb-1.5">Arabic / English restoration note for Gemini <span class="text-[11px] opacity-60">(optional — appended after Gemini enhancement)</span></p>
+          <textarea id="s1-custom-prompt" class="field-input resize-none" rows="3" dir="auto" oninput="s1_handleCustomPromptInput()"
+            placeholder="Extra restoration notes in Arabic or English. Gemini will enhance them and merge with the prompt above before Nano Banana runs."></textarea>
         </div>
 
         <div class="flex flex-wrap items-center gap-3">
-          <span id="s1-enhance-status" class="text-textMuted text-xs">Arabic or English input is accepted. Gemini on Replicate will enhance it automatically and add it to the fixed preservation prompt before Nano Banana runs.</span>
+          <span id="s1-enhance-status" class="text-textMuted text-xs">Arabic or English input is accepted. Gemini on Replicate will enhance it automatically and append it to the prompt above before Nano Banana runs.</span>
         </div>
 
         <div class="hidden">
@@ -192,7 +206,7 @@ Do not modernize the building and do not add or imagine any elements that are no
       <!-- Results section -->
       <div id="s1-results" class="hidden space-y-5">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <div class="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_#4ade80]"></div>
             <span class="text-white font-bold">اكتملت المعالجة بنجاح</span>
           </div>
@@ -381,6 +395,49 @@ Do not modernize the building and do not add or imagine any elements that are no
         </div>
       </div>
 
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">Prompt Studio</span>
+            <p class="text-textMuted text-xs">Visible and editable Service 02 prompts for analysis, every angle, negative prompt, and image-to-prompt.</p>
+          </div>
+          <button onclick="s2_resetPrompt()" title="Reset Service 02 prompt config"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset
+          </button>
+        </div>
+        <p id="s2-prompt-config-status" class="text-[11px] text-textMuted">Loading Service 02 prompt controls...</p>
+        <p class="text-[10px] text-textMuted/70">Supported placeholders: `[SELECTED_STYLE]`, `[BUILDING_TYPE]`, `[ARCHITECTURAL_STYLE]`, `[PROPOSED_USE]`, `[REQUESTED_VIEW]`, `[PROJECT_FACTS]`, `[REFERENCE_ELEMENTS]`.</p>
+
+        <details open class="rounded-2xl border border-panelBorder/70 bg-panelInner/40 p-4">
+          <summary class="cursor-pointer text-white font-bold text-sm">Generation Core</summary>
+          <div id="s2-prompt-core-editors" class="mt-4 grid grid-cols-1 gap-4"></div>
+        </details>
+
+        <details class="rounded-2xl border border-panelBorder/70 bg-panelInner/40 p-4">
+          <summary class="cursor-pointer text-white font-bold text-sm">Per-Style Guidance</summary>
+          <div id="s2-prompt-style-editors" class="mt-4 grid grid-cols-1 gap-4"></div>
+        </details>
+
+        <details class="rounded-2xl border border-panelBorder/70 bg-panelInner/40 p-4">
+          <summary class="cursor-pointer text-white font-bold text-sm">Per-View Templates</summary>
+          <div id="s2-prompt-view-editors" class="mt-4 grid grid-cols-1 gap-4"></div>
+        </details>
+
+        <details class="rounded-2xl border border-panelBorder/70 bg-panelInner/40 p-4">
+          <summary class="cursor-pointer text-white font-bold text-sm">Style Analysis Prompts</summary>
+          <div id="s2-prompt-analysis-editors" class="mt-4 grid grid-cols-1 gap-4"></div>
+        </details>
+
+        <details class="rounded-2xl border border-panelBorder/70 bg-panelInner/40 p-4">
+          <summary class="cursor-pointer text-white font-bold text-sm">Image To Prompt</summary>
+          <div id="s2-prompt-image-editors" class="mt-4 grid grid-cols-1 gap-4"></div>
+        </details>
+        <p id="s2-prompt-config-edited-badge" class="hidden text-[11px] text-amber-400 flex items-center gap-1">
+          <i data-lucide="pencil" class="w-3 h-3"></i> Prompt config edited — your custom text will be sent to the backend
+        </p>
+      </div>
+
       <!-- Submit button -->
       <button id="s2-submit-btn" onclick="s2_submit()"
         class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
@@ -527,6 +584,26 @@ Do not modernize the building and do not add or imagine any elements that are no
           <textarea id="s3-notes" class="field-input resize-none" rows="2" placeholder="أي معلومات تاريخية أو تخطيطية ذات صلة..."></textarea>
         </div>
       </div>
+      <!-- S3 Editable Base Prompt for SDXL Urban Views -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">🏙️ SDXL Urban Views</span>
+            <p class="text-textMuted text-xs">Base Prompt — fully editable, appended to each SDXL urban view prompt</p>
+          </div>
+          <button onclick="s3_resetPrompt()" title="Reset to default prompt"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset
+          </button>
+        </div>
+        <textarea id="s3-prompt-override" class="field-input resize-y" rows="6" dir="ltr"
+          oninput="s3_onPromptEdit()">Generate a photorealistic urban heritage visualization of this historic district. Preserve the authentic architectural character, street scale, material textures, and spatial atmosphere of the heritage area. Show traditional buildings, narrow heritage streets or open plazas, appropriate landscape, and subtle human presence. The scene must feel historically grounded, lively, and presentation-ready.</textarea>
+        <p id="s3-prompt-edited-badge" class="hidden mt-1.5 text-[11px] text-amber-400 flex items-center gap-1">
+          <i data-lucide="pencil" class="w-3 h-3"></i> Prompt edited — your version will be appended to every urban view
+        </p>
+        <p class="mt-1.5 text-[10px] text-textMuted/60">Note: district name, style, and view angle are prepended automatically. Edit the base instruction above.</p>
+      </div>
+
       <button id="s3-submit-btn" onclick="s3_submit()" class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
         <i data-lucide="map" class="w-5 h-5"></i> بدء التحليل الجغرافي والعمراني
       </button>
@@ -660,6 +737,26 @@ Do not modernize the building and do not add or imagine any elements that are no
         <div><label class="field-label">صيغة التصدير</label>
           <select class="field-input"><option>STL (طباعة 3D)</option><option>OBJ</option><option>GLB</option><option>FBX</option></select></div>
       </div>
+      <!-- S5 Editable Base Prompt for Replicate 3D -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">🧊 Replicate 3D</span>
+            <p class="text-textMuted text-xs">3D Generation Prompt — fully editable, overrides the auto-built 3D prompt</p>
+          </div>
+          <button onclick="s5_resetPrompt()" title="Reset to default prompt"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset
+          </button>
+        </div>
+        <textarea id="s5-prompt-override" class="field-input resize-y" rows="6" dir="ltr"
+          oninput="s5_onPromptEdit()">Architectural heritage 3D model of a traditional heritage building. Preserve the authentic massing, facade rhythm, roof logic, and heritage proportions. Generate articulated facade depth, readable openings, parapets, roof variation, and professional editable geometry. Avoid generic block massing. Emphasize authentic style-specific elements such as arches, window frames, facade bands, parapets, and decorative features.</textarea>
+        <p id="s5-prompt-edited-badge" class="hidden mt-1.5 text-[11px] text-amber-400 flex items-center gap-1">
+          <i data-lucide="pencil" class="w-3 h-3"></i> Prompt edited — will replace the auto-built 3D prompt
+        </p>
+        <p class="mt-1.5 text-[10px] text-textMuted/60">Note: building name, style, and location context are appended automatically when using auto-generate. Edit above to fully override.</p>
+      </div>
+
       <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
         <i data-lucide="box" class="w-5 h-5"></i> بدء النمذجة ثلاثية الأبعاد
       </button>
@@ -693,6 +790,25 @@ Do not modernize the building and do not add or imagine any elements that are no
           <div id="files-s6-logo" class="mt-2 space-y-2 hidden"></div>
         </div>
       </div>
+      <!-- S6 Editable Board Refinement Prompt -->
+      <div class="bg-panelDark border border-panelBorder rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-accent/10 text-accent border border-accent/20">🍌 Nano Banana Board</span>
+            <p class="text-textMuted text-xs">Board Refinement Prompt — sent to Nano Banana for presentation board enhancement</p>
+          </div>
+          <button onclick="s6_resetBoardPrompt()" title="Reset to default board prompt"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset
+          </button>
+        </div>
+        <textarea id="s6-board-prompt" class="field-input resize-y" rows="5" dir="ltr"
+          oninput="s6_onBoardPromptEdit()">Refine this architecture presentation board into a premium competition-style review sheet. Preserve the exact building identity, massing, materials, and viewpoints from the references. Do not redesign the project, invent unrelated buildings, or disturb the board layout. Keep a clean neutral sheet background, elegant image panels, and coherent visual harmony.</textarea>
+        <p id="s6-board-prompt-edited-badge" class="hidden mt-1.5 text-[11px] text-amber-400 flex items-center gap-1">
+          <i data-lucide="pencil" class="w-3 h-3"></i> Board prompt edited — your version will be used
+        </p>
+      </div>
+
       <button class="w-full bg-gradient-to-l from-accent to-[#c9a24d] text-[#0b1521] font-extrabold py-4 rounded-xl flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-[0_4px_20px_rgba(223,184,103,0.3)]">
         <i data-lucide="folder-output" class="w-5 h-5"></i> توليد الوثيقة التوثيقية الشاملة
       </button>
@@ -779,8 +895,12 @@ async function s1_submit(){
   try {
     const form = new FormData();
     for(const f of fileInput.files) form.append('images', f);
-    const prompt = document.getElementById('s1-prompt')?.value.trim();
-    if (prompt) form.append('prompt', prompt);
+    // Always send the editable fixed prompt override
+    const fixedPromptValue = document.getElementById('s1-prompt')?.value.trim();
+    if (fixedPromptValue) form.append('fixedPromptOverride', fixedPromptValue);
+    // Also send custom Gemini note if present
+    const customPromptValue = document.getElementById('s1-custom-prompt')?.value.trim();
+    if (customPromptValue) form.append('customPrompt', customPromptValue);
 
     const detail = document.getElementById('s1-proc-detail');
     detail.textContent = `جارٍ رفع ${fileInput.files.length} صورة إلى الخادم...`;
@@ -885,6 +1005,47 @@ function s1_showResults(data, fileNames){
   }
 }
 
+const S1_DEFAULT_PROMPT = `Carefully restore and clean this historic building while strictly preserving the original structure exactly as it appears in the image.
+Do NOT change the camera angle, perspective, framing, or lighting.
+Do NOT reconstruct missing parts, invent details, or add any new decorations, ornaments, or architectural elements.
+
+Only perform minimal restoration:
+- remove temporary construction supports, scaffolding, and maintenance tools
+- repair visible cracks and damaged surfaces
+- clean dirt, stains, and weathering from walls and materials
+- stabilize broken or chipped areas using the same original materials and textures
+
+Maintain the exact heritage style, authentic materials, and all existing architectural details exactly as in the original photo.
+Do not modernize the building and do not add or imagine any elements that are not clearly present in the image.`;
+
+function s1_onPromptEdit() {
+  const ta = document.getElementById('s1-prompt');
+  const badge = document.getElementById('s1-prompt-edited-badge');
+  const isDefault = ta.value.trim() === S1_DEFAULT_PROMPT.trim();
+  badge.classList.toggle('hidden', isDefault);
+  lucide.createIcons();
+}
+
+function s1_resetPrompt() {
+  const ta = document.getElementById('s1-prompt');
+  ta.value = S1_DEFAULT_PROMPT;
+  document.getElementById('s1-prompt-edited-badge').classList.add('hidden');
+}
+
+function s1_handleCustomPromptInput() {
+  const val = document.getElementById('s1-custom-prompt').value.trim();
+  const status = document.getElementById('s1-enhance-status');
+  if (val) {
+    status.textContent = '✦ Gemini will enhance this note and append it to the restoration prompt above.';
+    status.classList.remove('text-textMuted');
+    status.classList.add('text-amber-400');
+  } else {
+    status.textContent = 'Arabic or English input is accepted. Gemini on Replicate will enhance it automatically and append it to the prompt above before Nano Banana runs.';
+    status.classList.remove('text-amber-400');
+    status.classList.add('text-textMuted');
+  }
+}
+
 function s1_reset(){
   document.getElementById('s1-results').classList.add('hidden');
   document.getElementById('s1-error').classList.add('hidden');
@@ -931,6 +1092,8 @@ async function itpAnalyze() {
   try {
     const fd = new FormData();
     fd.append('image', fileInput.files[0]);
+    const s2PromptConfig = s2_serializePromptConfig();
+    if (s2PromptConfig) fd.append('promptConfig', s2PromptConfig);
     const res = await fetch('/api/service2/image-to-prompt', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'فشل التحليل');
@@ -968,7 +1131,294 @@ function itpUseAsPrompt() {
   }
 }
 
-// ── Service 02: Architectural Visualization ───────────────────────────────
+// ── Service 02 prompt helpers ───────────────────────────────────────────────────
+let S2_PROMPT_CONFIG_DEFAULTS = null;
+let S2_PROMPT_EDITOR_META = { viewOrder: [], styleGuidanceOrder: [], placeholders: {} };
+
+function s2_promptDomId(prefix, key) {
+  const safeKey = String(key || 'field')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'field';
+  return `${prefix}-${safeKey}`;
+}
+
+function s2_escapeHtml(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function s2_titleFromKey(key = '') {
+  return String(key || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function s2_promptEditorCard(id, label, value, helpText = '', rows = 5) {
+  return `
+    <div class="bg-[#0b1521] border border-panelBorder rounded-2xl p-4">
+      <label for="${id}" class="field-label">${s2_escapeHtml(label)}</label>
+      ${helpText ? `<p class="text-[10px] text-textMuted/70 mb-2">${s2_escapeHtml(helpText)}</p>` : ''}
+      <textarea id="${id}" class="field-input resize-y" rows="${rows}" dir="ltr" oninput="s2_onPromptConfigEdit()">${s2_escapeHtml(value)}</textarea>
+    </div>`;
+}
+
+function s2_getStyleGuidanceOrder(config = S2_PROMPT_CONFIG_DEFAULTS) {
+  return (S2_PROMPT_EDITOR_META.styleGuidanceOrder && S2_PROMPT_EDITOR_META.styleGuidanceOrder.length)
+    ? S2_PROMPT_EDITOR_META.styleGuidanceOrder
+    : Object.keys(config?.generation?.styleGuidance || {});
+}
+
+function s2_getViewOrder() {
+  return Array.isArray(S2_PROMPT_EDITOR_META.viewOrder) ? S2_PROMPT_EDITOR_META.viewOrder : [];
+}
+
+function s2_renderPromptEditors(config) {
+  if (!config) return;
+
+  const coreContainer = document.getElementById('s2-prompt-core-editors');
+  const styleContainer = document.getElementById('s2-prompt-style-editors');
+  const viewContainer = document.getElementById('s2-prompt-view-editors');
+  const analysisContainer = document.getElementById('s2-prompt-analysis-editors');
+  const imageContainer = document.getElementById('s2-prompt-image-editors');
+  const status = document.getElementById('s2-prompt-config-status');
+
+  if (status) {
+    status.textContent = 'Service 02 prompt controls loaded.';
+    status.classList.remove('text-red-400');
+    status.classList.add('text-textMuted');
+  }
+
+  if (coreContainer) {
+    coreContainer.innerHTML = [
+      s2_promptEditorCard(
+        's2-generation-base-prompt',
+        'Generation Base Prompt',
+        config.generation?.basePromptTemplate || '',
+        'Core instruction block used before the per-view template.',
+        18
+      ),
+      s2_promptEditorCard(
+        's2-generation-negative-prompt',
+        'Negative Prompt',
+        config.generation?.negativePrompt || '',
+        'Appended as the Avoid clause for each generated view.',
+        4
+      ),
+    ].join('');
+  }
+
+  if (styleContainer) {
+    styleContainer.innerHTML = s2_getStyleGuidanceOrder(config)
+      .map(key => s2_promptEditorCard(
+        s2_promptDomId('s2-style-guidance', key),
+        `${s2_titleFromKey(key)} Guidance`,
+        config.generation?.styleGuidance?.[key] || '',
+        'Extra style-specific instruction used when this style is selected.',
+        4
+      ))
+      .join('');
+  }
+
+  if (viewContainer) {
+    viewContainer.innerHTML = s2_getViewOrder()
+      .map(view => s2_promptEditorCard(
+        s2_promptDomId('s2-view-template', view.id),
+        `${view.labelEn || s2_titleFromKey(view.id)} Template`,
+        config.generation?.viewTemplates?.[view.id] || '',
+        `Used only for ${view.labelEn || view.id}.`,
+        7
+      ))
+      .join('');
+  }
+
+  if (analysisContainer) {
+    analysisContainer.innerHTML = [
+      s2_promptEditorCard(
+        's2-analysis-system-prompt',
+        'Style Analysis System Prompt',
+        config.analysis?.systemPrompt || '',
+        'Sent as the system prompt when the backend analyzes uploaded reference images.',
+        6
+      ),
+      s2_promptEditorCard(
+        's2-analysis-user-prompt',
+        'Style Analysis User Prompt Template',
+        config.analysis?.userPromptTemplate || '',
+        'Supports [SELECTED_STYLE] and [BUILDING_TYPE].',
+        10
+      ),
+    ].join('');
+  }
+
+  if (imageContainer) {
+    imageContainer.innerHTML = [
+      s2_promptEditorCard(
+        's2-image-system-prompt',
+        'Image To Prompt System Prompt',
+        config.imageToPrompt?.systemPrompt || '',
+        'Used by the Image To Prompt helper in Service 02.',
+        6
+      ),
+      s2_promptEditorCard(
+        's2-image-user-prompt',
+        'Image To Prompt User Prompt',
+        config.imageToPrompt?.userPromptTemplate || '',
+        'The visible prompt used when the helper analyzes one uploaded reference image.',
+        10
+      ),
+    ].join('');
+  }
+
+  s2_onPromptConfigEdit();
+  lucide.createIcons();
+}
+
+function s2_collectPromptConfig() {
+  if (!S2_PROMPT_CONFIG_DEFAULTS) return null;
+
+  const styleGuidance = {};
+  for (const key of s2_getStyleGuidanceOrder(S2_PROMPT_CONFIG_DEFAULTS)) {
+    const field = document.getElementById(s2_promptDomId('s2-style-guidance', key));
+    styleGuidance[key] = (field?.value || '').trim();
+  }
+
+  const viewTemplates = {};
+  for (const view of s2_getViewOrder()) {
+    const field = document.getElementById(s2_promptDomId('s2-view-template', view.id));
+    viewTemplates[view.id] = (field?.value || '').trim();
+  }
+
+  return {
+    analysis: {
+      systemPrompt: (document.getElementById('s2-analysis-system-prompt')?.value || '').trim(),
+      userPromptTemplate: (document.getElementById('s2-analysis-user-prompt')?.value || '').trim(),
+    },
+    generation: {
+      basePromptTemplate: (document.getElementById('s2-generation-base-prompt')?.value || '').trim(),
+      negativePrompt: (document.getElementById('s2-generation-negative-prompt')?.value || '').trim(),
+      styleGuidance,
+      viewTemplates,
+    },
+    imageToPrompt: {
+      systemPrompt: (document.getElementById('s2-image-system-prompt')?.value || '').trim(),
+      userPromptTemplate: (document.getElementById('s2-image-user-prompt')?.value || '').trim(),
+    },
+  };
+}
+
+function s2_onPromptConfigEdit() {
+  const badge = document.getElementById('s2-prompt-config-edited-badge');
+  if (!badge || !S2_PROMPT_CONFIG_DEFAULTS) return;
+
+  const currentConfig = s2_collectPromptConfig();
+  if (currentConfig && JSON.stringify(currentConfig) !== JSON.stringify(S2_PROMPT_CONFIG_DEFAULTS)) {
+    badge.classList.remove('hidden');
+    lucide.createIcons();
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function s2_resetPromptConfig() {
+  if (!S2_PROMPT_CONFIG_DEFAULTS) return;
+  s2_renderPromptEditors(JSON.parse(JSON.stringify(S2_PROMPT_CONFIG_DEFAULTS)));
+  document.getElementById('s2-prompt-config-edited-badge')?.classList.add('hidden');
+}
+
+function s2_resetPrompt() {
+  s2_resetPromptConfig();
+}
+
+function s2_onPromptEdit() {
+  s2_onPromptConfigEdit();
+}
+
+function s2_serializePromptConfig() {
+  const currentConfig = s2_collectPromptConfig();
+  return currentConfig ? JSON.stringify(currentConfig) : '';
+}
+
+async function s2_loadPromptConfig() {
+  const status = document.getElementById('s2-prompt-config-status');
+  if (!status) return;
+
+  status.textContent = 'Loading Service 02 prompt controls...';
+  try {
+    const res = await fetch('/api/service2/prompt-config');
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load prompt config');
+
+    S2_PROMPT_CONFIG_DEFAULTS = data.defaults || {};
+    S2_PROMPT_EDITOR_META = {
+      viewOrder: Array.isArray(data.viewOrder) ? data.viewOrder : [],
+      styleGuidanceOrder: Array.isArray(data.styleGuidanceOrder) ? data.styleGuidanceOrder : [],
+      placeholders: data.placeholders || {},
+    };
+
+    s2_renderPromptEditors(JSON.parse(JSON.stringify(S2_PROMPT_CONFIG_DEFAULTS)));
+  } catch (error) {
+    status.textContent = `Prompt editor unavailable: ${error.message}`;
+    status.classList.remove('text-textMuted');
+    status.classList.add('text-red-400');
+  }
+}
+
+// ── Service 03 prompt helpers ───────────────────────────────────────────────────
+const S3_DEFAULT_PROMPT = 'Generate a photorealistic urban heritage visualization of this historic district. Preserve the authentic architectural character, street scale, material textures, and spatial atmosphere of the heritage area. Show traditional buildings, narrow heritage streets or open plazas, appropriate landscape, and subtle human presence. The scene must feel historically grounded, lively, and presentation-ready.';
+
+function s3_resetPrompt() {
+  const ta = document.getElementById('s3-prompt-override');
+  if (ta) ta.value = S3_DEFAULT_PROMPT;
+  document.getElementById('s3-prompt-edited-badge')?.classList.add('hidden');
+}
+function s3_onPromptEdit() {
+  const ta = document.getElementById('s3-prompt-override');
+  const badge = document.getElementById('s3-prompt-edited-badge');
+  if (!badge) return;
+  if ((ta?.value || '').trim() !== S3_DEFAULT_PROMPT) { badge.classList.remove('hidden'); lucide.createIcons(); }
+  else { badge.classList.add('hidden'); }
+}
+
+// ── Service 05 prompt helpers ───────────────────────────────────────────────────
+const S5_DEFAULT_PROMPT = 'Architectural heritage 3D model of a traditional heritage building. Preserve the authentic massing, facade rhythm, roof logic, and heritage proportions. Generate articulated facade depth, readable openings, parapets, roof variation, and professional editable geometry. Avoid generic block massing. Emphasize authentic style-specific elements such as arches, window frames, facade bands, parapets, and decorative features.';
+
+function s5_resetPrompt() {
+  const ta = document.getElementById('s5-prompt-override');
+  if (ta) ta.value = S5_DEFAULT_PROMPT;
+  document.getElementById('s5-prompt-edited-badge')?.classList.add('hidden');
+}
+function s5_onPromptEdit() {
+  const ta = document.getElementById('s5-prompt-override');
+  const badge = document.getElementById('s5-prompt-edited-badge');
+  if (!badge) return;
+  if ((ta?.value || '').trim() !== S5_DEFAULT_PROMPT) { badge.classList.remove('hidden'); lucide.createIcons(); }
+  else { badge.classList.add('hidden'); }
+}
+
+// ── Service 06 board prompt helpers ────────────────────────────────────────────
+const S6_DEFAULT_BOARD_PROMPT = 'Refine this architecture presentation board into a premium competition-style review sheet. Preserve the exact building identity, massing, materials, and viewpoints from the references. Do not redesign the project, invent unrelated buildings, or disturb the board layout. Keep a clean neutral sheet background, elegant image panels, and coherent visual harmony.';
+
+function s6_resetBoardPrompt() {
+  const ta = document.getElementById('s6-board-prompt');
+  if (ta) ta.value = S6_DEFAULT_BOARD_PROMPT;
+  document.getElementById('s6-board-prompt-edited-badge')?.classList.add('hidden');
+}
+function s6_onBoardPromptEdit() {
+  const ta = document.getElementById('s6-board-prompt');
+  const badge = document.getElementById('s6-board-prompt-edited-badge');
+  if (!badge) return;
+  if ((ta?.value || '').trim() !== S6_DEFAULT_BOARD_PROMPT) { badge.classList.remove('hidden'); lucide.createIcons(); }
+  else { badge.classList.add('hidden'); }
+}
+
+// ── Service 02: Architectural Visualization ─────────────────────────────────────────────
 async function s2_submit(){
   document.getElementById('s2-submit-btn').classList.add('hidden');
   document.getElementById('s2-results').classList.add('hidden');
@@ -1011,6 +1461,8 @@ async function s2_submit(){
     form.append('specialReqs', document.getElementById('s2-reqs').value);
     form.append('buildingName',document.getElementById('s2-name').value);
     form.append('numViews',    numViews);
+    const s2PromptConfig = s2_serializePromptConfig();
+    if (s2PromptConfig) form.append('promptConfig', s2PromptConfig);
 
     const res  = await fetch('/api/service2/generate', { method:'POST', body: form });
     const data = await res.json();
@@ -1090,6 +1542,7 @@ function s2_reset(){
   document.getElementById('files-s2').innerHTML = '';
   document.getElementById('files-s2').classList.add('hidden');
   document.getElementById('s2-progress-bar').style.width = '5%';
+  s2_resetPromptConfig();
 }
 
 
@@ -1339,6 +1792,8 @@ async function s1_submit(){
   try {
     const form = new FormData();
     for (const f of fileInput.files) form.append('images', f);
+    const fixedPromptValue = document.getElementById('s1-prompt')?.value.trim();
+    if (fixedPromptValue) form.append('fixedPromptOverride', fixedPromptValue);
     const customPrompt = s1_getCustomPrompt();
     if (customPrompt) form.append('customPrompt', customPrompt);
 
@@ -1540,6 +1995,7 @@ function s1_reset(){
   document.getElementById('s1-error').classList.add('hidden');
   document.getElementById('s1-submit-btn').classList.remove('hidden');
   document.getElementById('file-s1').value = '';
+  document.getElementById('s1-custom-prompt').value = '';
   document.getElementById('files-s1').innerHTML = '';
   document.getElementById('files-s1').classList.add('hidden');
   document.getElementById('s1-progress-bar').style.width = '5%';
@@ -1555,6 +2011,7 @@ function s1_reset(){
   clearTimeout(window._s1EnhanceTimer);
   window._s1EnhanceTimer = null;
   window._s1EnhanceRequestId = 0;
+  s1_resetPrompt();
   s1_setEnhancedPrompt('');
   s1_setEnhanceStatus('Arabic or English input is accepted. Gemini on Replicate will enhance it automatically and add it to the fixed preservation prompt before Nano Banana runs.');
   window._s1JobId = null;
@@ -1618,6 +2075,8 @@ async function s3_submit() {
     form.append('archStyle',    document.getElementById('s3-style')?.value    || 'نجدي');
     form.append('districtArea', document.getElementById('s3-area')?.value     || '');
     form.append('notes',        document.getElementById('s3-notes')?.value    || '');
+    const s3PromptOverride = (document.getElementById('s3-prompt-override')?.value || '').trim();
+    if (s3PromptOverride) form.append('promptOverride', s3PromptOverride);
 
     const res  = await fetch('/api/service3/analyze', { method: 'POST', body: form });
     const data = await res.json();
@@ -1730,6 +2189,7 @@ function s3_reset() {
   if (document.getElementById('s3-area'))     document.getElementById('s3-area').value     = '';
   if (document.getElementById('s3-notes'))    document.getElementById('s3-notes').value    = '';
   if (document.getElementById('s3-style'))    document.getElementById('s3-style').selectedIndex = 0;
+  s3_resetPrompt();
 }
 
 function s4_escapeHtml(value = '') {
@@ -1748,6 +2208,98 @@ function s4_getJobsCatalog() {
 function s4_findJob(service, jobId) {
   if (!jobId) return null;
   return s4_getJobsCatalog().find(job => job.service === service && job.jobId === jobId) || null;
+}
+
+let S4_PROMPT_CONFIG_DEFAULTS = null;
+
+function s4_promptEditorCard(id, label, value, helpText = '', rows = 6) {
+  return `
+    <div class="bg-[#0b1521] border border-panelBorder rounded-2xl p-4">
+      <label for="${id}" class="field-label">${s4_escapeHtml(label)}</label>
+      ${helpText ? `<p class="text-[10px] text-textMuted/70 mb-2">${s4_escapeHtml(helpText)}</p>` : ''}
+      <textarea id="${id}" class="field-input resize-y" rows="${rows}" dir="ltr" oninput="s4_onPromptConfigEdit()">${s4_escapeHtml(value || '')}</textarea>
+    </div>`;
+}
+
+function s4_renderPromptConfig(config) {
+  if (!config) return;
+  const container = document.getElementById('s4-prompt-editors');
+  const status = document.getElementById('s4-prompt-config-status');
+  if (!container || !status) return;
+
+  container.innerHTML = [
+    s4_promptEditorCard(
+      's4-system-prompt',
+      'System Prompt',
+      config.systemPrompt || '',
+      'Used as the model role/instruction prompt for the Service 04 report writer.',
+      7
+    ),
+    s4_promptEditorCard(
+      's4-user-prompt-template',
+      'User Prompt Template',
+      config.userPromptTemplate || '',
+      'Supports placeholders like [REPORT_TYPE_LABEL], [LANGUAGE_INSTRUCTION], [JSON_SCHEMA], and [PROJECT_CONTEXT_JSON].',
+      18
+    ),
+  ].join('');
+
+  status.textContent = 'Service 04 prompt controls loaded.';
+  status.classList.remove('text-red-400');
+  status.classList.add('text-textMuted');
+  s4_onPromptConfigEdit();
+  lucide.createIcons();
+}
+
+function s4_collectPromptConfig() {
+  if (!S4_PROMPT_CONFIG_DEFAULTS) return null;
+  return {
+    systemPrompt: (document.getElementById('s4-system-prompt')?.value || '').trim(),
+    userPromptTemplate: (document.getElementById('s4-user-prompt-template')?.value || '').trim(),
+  };
+}
+
+function s4_onPromptConfigEdit() {
+  const badge = document.getElementById('s4-prompt-config-edited-badge');
+  if (!badge || !S4_PROMPT_CONFIG_DEFAULTS) return;
+
+  const currentConfig = s4_collectPromptConfig();
+  if (currentConfig && JSON.stringify(currentConfig) !== JSON.stringify(S4_PROMPT_CONFIG_DEFAULTS)) {
+    badge.classList.remove('hidden');
+    lucide.createIcons();
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function s4_resetPromptConfig() {
+  if (!S4_PROMPT_CONFIG_DEFAULTS) return;
+  s4_renderPromptConfig(JSON.parse(JSON.stringify(S4_PROMPT_CONFIG_DEFAULTS)));
+  document.getElementById('s4-prompt-config-edited-badge')?.classList.add('hidden');
+}
+
+function s4_serializePromptConfig() {
+  const currentConfig = s4_collectPromptConfig();
+  return currentConfig ? JSON.stringify(currentConfig) : '';
+}
+
+async function s4_loadPromptConfig() {
+  const status = document.getElementById('s4-prompt-config-status');
+  if (!status) return;
+
+  status.textContent = 'Loading Service 04 prompt controls...';
+  try {
+    const res = await fetch('/api/service4/prompt-config', { cache: 'no-store' });
+    const data = await s1_readApiResponse(res);
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load prompt config');
+
+    S4_PROMPT_CONFIG_DEFAULTS = data.defaults || {};
+    s4_renderPromptConfig(JSON.parse(JSON.stringify(S4_PROMPT_CONFIG_DEFAULTS)));
+  } catch (error) {
+    status.textContent = `Prompt editor unavailable: ${error.message}`;
+    status.classList.remove('text-textMuted');
+    status.classList.add('text-red-400');
+  }
 }
 
 function s4_renderLinkedJobsPreview() {
@@ -1905,6 +2457,27 @@ function s4_bootstrap() {
     <div class="col-span-2"><label class="field-label">Ù…Ù„Ø§Ø­Ø¸Ø§Øª Ø¥Ø¶Ø§ÙÙŠØ©</label><textarea id="s4-notes" class="field-input resize-none" rows="2" placeholder="Ø£ÙŠ Ù…Ø±Ø§Ø¬Ø¹ Ø£Ùˆ Ø§Ø´ØªØ±Ø§Ø·Ø§Øª Ø£Ùˆ Ù…Ù„Ø§Ø­Ø¸Ø§Øª ØªÙ†Ø¸ÙŠÙ…ÙŠØ© Ø¥Ø¶Ø§ÙÙŠØ©"></textarea></div>`;
   formCard.appendChild(extraFields);
 
+  const promptPanel = document.createElement('div');
+  promptPanel.className = 'col-span-2 bg-panelInner border border-panelBorder rounded-2xl p-5 mt-1 space-y-4';
+  promptPanel.innerHTML = `
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <p class="text-accent font-bold text-sm">Service 04 Prompt Studio</p>
+        <p class="text-textMuted text-xs">Visible and editable report-writing prompts used by the AI writer.</p>
+      </div>
+      <button type="button" onclick="s4_resetPromptConfig()"
+        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+        <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset All
+      </button>
+    </div>
+    <p id="s4-prompt-config-status" class="text-[11px] text-textMuted">Loading Service 04 prompt controls...</p>
+    <p id="s4-prompt-config-edited-badge" class="hidden text-[11px] text-amber-400 flex items-center gap-1">
+      <i data-lucide="pencil" class="w-3 h-3"></i> Prompt config edited - your custom text will be sent to the backend
+    </p>
+    <p class="text-[10px] text-textMuted/70">Supported placeholders: [REPORT_MODE_LABEL], [REPORT_TYPE_LABEL], [REPORT_TYPE_UI_LABEL], [LANGUAGE_INSTRUCTION], [DEPTH_REQUIREMENT], [TONE], [MODE_TONE], [OBJECTIVE], [EMPHASIS], [JSON_SCHEMA], [PROJECT_CONTEXT_JSON].</p>
+    <div id="s4-prompt-editors" class="grid grid-cols-1 gap-4"></div>`;
+  formCard.appendChild(promptPanel);
+
   submitBtn.id = 's4-submit-btn';
   submitBtn.onclick = s4_submit;
 
@@ -1950,6 +2523,7 @@ function s4_bootstrap() {
 
   s4_applyArabicFixes();
   s4_loadJobs();
+  s4_loadPromptConfig();
   s4_renderLinkedJobsPreview();
   lucide.createIcons();
 }
@@ -2075,6 +2649,8 @@ async function s4_submit() {
     form.append('adaptiveReuseConcept', document.getElementById('s4-reuse')?.value || '');
     form.append('geographicContext', document.getElementById('s4-context')?.value || document.getElementById('s4-context-title')?.value || '');
     form.append('notes', document.getElementById('s4-notes')?.value || '');
+    const s4PromptConfig = s4_serializePromptConfig();
+    if (s4PromptConfig) form.append('promptConfig', s4PromptConfig);
 
     const res = await fetch('/api/service4/generate', { method: 'POST', body: form });
     const data = await s1_readApiResponse(res);
@@ -2146,6 +2722,7 @@ function s4_reset() {
     const el = document.getElementById(id);
     if (el) el.selectedIndex = 0;
   });
+  s4_resetPromptConfig();
   s4_renderLinkedJobsPreview();
 }
 
@@ -2331,6 +2908,8 @@ async function s4_submit() {
     form.append('adaptiveReuseConcept', document.getElementById('s4-reuse')?.value || '');
     form.append('geographicContext', document.getElementById('s4-context')?.value || document.getElementById('s4-context-title')?.value || '');
     form.append('notes', document.getElementById('s4-notes')?.value || '');
+    const s4PromptConfig = s4_serializePromptConfig();
+    if (s4PromptConfig) form.append('promptConfig', s4PromptConfig);
 
     const res = await fetch('/api/service4/generate', { method: 'POST', body: form });
     const data = await s1_readApiResponse(res);
@@ -2547,6 +3126,26 @@ function s4_bootstrap() {
     <div class="col-span-2"><label class="field-label">السياق الجغرافي والعمراني</label><textarea id="s4-context" class="field-input resize-none" rows="2" placeholder="العلاقة بالحي والشارع والمشهد الحضري"></textarea></div>
     <div class="col-span-2"><label class="field-label">ملاحظات إضافية</label><textarea id="s4-notes" class="field-input resize-none" rows="2" placeholder="أي مراجع أو اشتراطات أو ملاحظات تنظيمية إضافية"></textarea></div>`;
   formCard.appendChild(extraFields);
+  const promptPanel = document.createElement('div');
+  promptPanel.className = 'col-span-2 bg-panelInner border border-panelBorder rounded-2xl p-5 mt-1 space-y-4';
+  promptPanel.innerHTML = `
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <p class="text-accent font-bold text-sm">Service 04 Prompt Studio</p>
+        <p class="text-textMuted text-xs">Visible and editable report-writing prompts used by the AI writer.</p>
+      </div>
+      <button type="button" onclick="s4_resetPromptConfig()"
+        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-textMuted border border-panelBorder hover:text-accent hover:border-accent/30 transition-colors">
+        <i data-lucide="rotate-ccw" class="w-3 h-3"></i> Reset All
+      </button>
+    </div>
+    <p id="s4-prompt-config-status" class="text-[11px] text-textMuted">Loading Service 04 prompt controls...</p>
+    <p id="s4-prompt-config-edited-badge" class="hidden text-[11px] text-amber-400 flex items-center gap-1">
+      <i data-lucide="pencil" class="w-3 h-3"></i> Prompt config edited - your custom text will be sent to the backend
+    </p>
+    <p class="text-[10px] text-textMuted/70">Supported placeholders: [REPORT_MODE_LABEL], [REPORT_TYPE_LABEL], [REPORT_TYPE_UI_LABEL], [LANGUAGE_INSTRUCTION], [DEPTH_REQUIREMENT], [TONE], [MODE_TONE], [OBJECTIVE], [EMPHASIS], [JSON_SCHEMA], [PROJECT_CONTEXT_JSON].</p>
+    <div id="s4-prompt-editors" class="grid grid-cols-1 gap-4"></div>`;
+  formCard.appendChild(promptPanel);
   const s4AiModelSelect = document.getElementById('s4-ai-model');
   const s4SavedAiModel = localStorage.getItem('s4_ai_model');
   if (s4AiModelSelect) {
@@ -2599,6 +3198,7 @@ function s4_bootstrap() {
 
   s4_applyArabicFixes();
   s4_loadJobs();
+  s4_loadPromptConfig();
   s4_renderLinkedJobsPreview();
   lucide.createIcons();
 }
@@ -2847,6 +3447,8 @@ async function s4_submit() {
     form.append('adaptiveReuseConcept', document.getElementById('s4-reuse')?.value || '');
     form.append('geographicContext', document.getElementById('s4-context')?.value || document.getElementById('s4-context-title')?.value || '');
     form.append('notes', document.getElementById('s4-notes')?.value || '');
+    const s4PromptConfig = s4_serializePromptConfig();
+    if (s4PromptConfig) form.append('promptConfig', s4PromptConfig);
 
     const res = await fetch('/api/service4/generate', { method: 'POST', body: form });
     const data = await s1_readApiResponse(res);
@@ -3108,6 +3710,8 @@ async function s5_submit() {
     form.append('renderViewCount', document.getElementById('s5-views')?.value || '6');
     form.append('includeTerrain', document.getElementById('s5-terrain')?.value || 'true');
     form.append('notes', document.getElementById('s5-notes')?.value || '');
+    const s5PromptOverride = (document.getElementById('s5-prompt-override')?.value || '').trim();
+    if (s5PromptOverride) form.append('promptOverride', s5PromptOverride);
 
     const res = await fetch('/api/service5/generate', { method: 'POST', body: form });
     const data = await s1_readApiResponse(res);
@@ -3197,6 +3801,7 @@ function s5_reset() {
   const views = document.getElementById('s5-views');
   if (thickness) thickness.value = '2.4';
   if (views) views.value = '6';
+  s5_resetPrompt();
 }
 
 function s6_bootstrap() {
@@ -3397,6 +4002,8 @@ async function s6_submit() {
     form.append('exportPreferences', document.getElementById('s6-export')?.value || 'pdf,word,pptx,html,xlsx,zip');
     form.append('brandingPreferences', document.getElementById('s6-branding')?.value || '');
     form.append('notes', document.getElementById('s6-notes')?.value || '');
+    const s6BoardPrompt = (document.getElementById('s6-board-prompt')?.value || '').trim();
+    if (s6BoardPrompt) form.append('boardPromptOverride', s6BoardPrompt);
 
     const res = await fetch('/api/service6/generate', { method: 'POST', body: form });
     const data = await s1_readApiResponse(res);
@@ -3488,8 +4095,10 @@ function s6_reset() {
     const el = document.getElementById(id);
     if (el) el.selectedIndex = 0;
   });
+  s6_resetBoardPrompt();
 }
 
+s2_loadPromptConfig();
 lucide.createIcons();
 </script>
 </body>

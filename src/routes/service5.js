@@ -398,6 +398,9 @@ function getBuildingReferenceImages(building, context) {
 }
 
 function buildReplicate3DPrompt(building, context) {
+  // If user provided a prompt override, use it directly
+  if (context?.promptOverride) return compactText(context.promptOverride, 900);
+
   const heritageElements = (building.styleElements || []).slice(0, 8).join(', ');
   const spatialContext = getSpatialContext(context);
   const districtContext = spatialContext
@@ -4372,6 +4375,8 @@ router.post('/generate', (req, res, next) => {
 
     const dedupedJobs = dedupeByJobId(linkedJobs);
     const context = await buildModelContext(req.body || {}, dedupedJobs, uploadedFilesSummary);
+    // Store user's 3D prompt override in context so buildReplicate3DPrompt can use it
+    context.promptOverride = normalizeText(req.body?.promptOverride || '');
     context.runtime = {
       appBaseUrl: resolveAppBaseUrl(req),
     };

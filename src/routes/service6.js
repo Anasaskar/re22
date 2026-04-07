@@ -3450,13 +3450,14 @@ async function refinePresentationBoardWithNanoBanana(basePath, referenceAssets, 
     if (sanitizedRefs.length >= 3) break;
   }
 
-  const prompt = compactText([
+  const defaultBoardPrompt = [
     'Refine this architecture presentation board into a premium competition-style review sheet.',
     `Primary subject: ${normalizeText(spec.title, 'Architectural presentation board')}.`,
     'Preserve the exact building identity, massing, materials, and viewpoints from the references.',
     'Do not redesign the project, invent unrelated buildings, or disturb the board layout.',
     'Keep a clean neutral sheet background, elegant image panels, and coherent visual harmony.',
-  ].join(' '), 900);
+  ].join(' ');
+  const prompt = compactText(spec.boardPromptOverride || defaultBoardPrompt, 900);
 
   const attempts = [
     [sanitizedBase, ...sanitizedRefs.slice(0, 2)],
@@ -3552,7 +3553,10 @@ async function buildPresentationBoardImage(spec, outPath, context, options = {})
   if (parseBooleanLike(options.enableNanoBanana, true) && spec.enableRefine !== false) {
     try {
       const refinedPath = path.join(tempDir, `${slugify(spec.title, 'board')}_refined.png`);
-      const result = await refinePresentationBoardWithNanoBanana(basePath, (spec.placements || []).map(item => item.asset), refinedPath, spec);
+      const specWithOverride = options.boardPromptOverride
+        ? { ...spec, boardPromptOverride: options.boardPromptOverride }
+        : spec;
+      const result = await refinePresentationBoardWithNanoBanana(basePath, (spec.placements || []).map(item => item.asset), refinedPath, specWithOverride);
       if (result && fs.existsSync(result)) refinedSourcePath = result;
     } catch (error) {
       refinedSourcePath = basePath;
@@ -6140,6 +6144,7 @@ router.post('/generate', (req, res, next) => {
       .map(asset => ({ path: asset.copiedPath, caption: asset.name }));
     const presentationOptions = {
       enableNanoBanana: parseBooleanLike(req.body.enableNanoBanana, true),
+      boardPromptOverride: normalizeText(req.body.boardPromptOverride || ''),
       coverage: dossier.coverage || buildCoverageModel(dedupedJobs, contentModel),
       totalAssets: contentModel.counts.totalAssets,
       buildingCount: dossier.buildingRecords.length,

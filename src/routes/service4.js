@@ -1597,7 +1597,66 @@ function parseJsonResponse(text) {
   return parseModelJsonObject(text);
 }
 
-function buildPromptBundle(context) {
+const SERVICE_04_PROMPT_DEFAULTS = {
+  systemPrompt: [
+    'You are a heritage conservation reporting specialist.',
+    'Write like a real academic, professional, or governmental heritage consultant.',
+    'Use only the supplied project context and state limitations when information is missing.',
+    'Do not mention internal service names, service numbers, or platform workflow details in the report; describe supporting inputs generically as reference materials, analyses, documentation, or visual evidence.',
+    'Do not fabricate measurements, dates, legal approvals, or citations beyond the provided frameworks.',
+    'Return valid JSON only.',
+  ].join(' '),
+  userPromptTemplate: [
+    'Prepare a [REPORT_MODE_LABEL] [REPORT_TYPE_LABEL].',
+    'Selected report type label in the website UI: "[REPORT_TYPE_UI_LABEL]". This exact label is the primary switch for the report structure.',
+    '[LANGUAGE_INSTRUCTION]',
+    'Depth requirement: [DEPTH_REQUIREMENT].',
+    'Tone: [TONE]. Secondary presentation mode nuance: [MODE_TONE].',
+    '[OBJECTIVE]',
+    '[EMPHASIS]',
+    'Organize the report into the requested sections and keep the writing formal, evidence-based, and heritage-aware.',
+    'Do not reuse the same structure across documentation, academic, and feasibility report types.',
+    'For standards and compliance, discuss framework relevance, likely alignment, and any validation still required inside the narrative sections and recommendations. The detailed standards checklist and sustainability matrix will be completed from the supplied frameworks separately.',
+    'Return only this JSON shape:',
+    '[JSON_SCHEMA]',
+    'Project context:',
+    '[PROJECT_CONTEXT_JSON]',
+  ].join('\n\n'),
+};
+
+function buildService4PromptConfig(input = {}) {
+  return {
+    systemPrompt: typeof input.systemPrompt === 'string'
+      ? input.systemPrompt.replace(/\r\n/g, '\n').trim()
+      : SERVICE_04_PROMPT_DEFAULTS.systemPrompt,
+    userPromptTemplate: typeof input.userPromptTemplate === 'string'
+      ? input.userPromptTemplate.replace(/\r\n/g, '\n').trim()
+      : SERVICE_04_PROMPT_DEFAULTS.userPromptTemplate,
+  };
+}
+
+function parseService4PromptConfig(rawValue) {
+  if (!rawValue) return buildService4PromptConfig();
+  if (typeof rawValue === 'object') return buildService4PromptConfig(rawValue);
+
+  try {
+    return buildService4PromptConfig(JSON.parse(String(rawValue)));
+  } catch (error) {
+    throw new Error('Service 04 prompt configuration must be valid JSON.');
+  }
+}
+
+function renderService4PromptTemplate(template, replacements = {}) {
+  return String(template || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\[([A-Z0-9_]+)\]/g, (_, key) => {
+      const replacement = replacements[key];
+      return replacement == null ? '' : String(replacement);
+    })
+    .trim();
+}
+
+function buildPromptBundle(context, promptConfig = buildService4PromptConfig()) {
   const localizedContext = localizedContextView(context);
   const promptProject = localizedContext.project;
   const paragraphsByDepth = {
@@ -1635,28 +1694,18 @@ function buildPromptBundle(context) {
     sections: localizedContext.sections,
   };
 
-  const systemPrompt = [
-    'You are a heritage conservation reporting specialist.',
-    'Write like a real academic, professional, or governmental heritage consultant.',
-    'Use only the supplied project context and state limitations when information is missing.',
-    'Do not mention internal service names, service numbers, or platform workflow details in the report; describe supporting inputs generically as reference materials, analyses, documentation, or visual evidence.',
-    'Do not fabricate measurements, dates, legal approvals, or citations beyond the provided frameworks.',
-    'Return valid JSON only.',
-  ].join(' ');
-
-  const userPrompt = [
-    `Prepare a ${REPORT_MODE_LABELS[context.report.mode] || context.report.mode} ${getReportTypeLabelLocalized(context.report.type, context.report.language)}.`,
-    `Selected report type label in the website UI: "${context.report.typeLabel || getReportTypeUiLabel(context.report.type)}". This exact label is the primary switch for the report structure.`,
-    languageInstruction[context.report.language] || languageInstruction.english,
-    `Depth requirement: ${paragraphsByDepth[context.report.depth] || paragraphsByDepth.medium}.`,
-    `Tone: ${typeProfile.tone}. Secondary presentation mode nuance: ${modeTone[context.report.mode] || modeTone.professional}.`,
-    typeProfile.objective,
-    typeProfile.emphasis,
-    'Organize the report into the requested sections and keep the writing formal, evidence-based, and heritage-aware.',
-    'Do not reuse the same structure across documentation, academic, and feasibility report types.',
-    'For standards and compliance, discuss framework relevance, likely alignment, and any validation still required inside the narrative sections and recommendations. The detailed standards checklist and sustainability matrix will be completed from the supplied frameworks separately.',
-    'Return only this JSON shape:',
-    JSON.stringify({
+  const systemPrompt = promptConfig.systemPrompt;
+  const userPrompt = renderService4PromptTemplate(promptConfig.userPromptTemplate, {
+    REPORT_MODE_LABEL: REPORT_MODE_LABELS[context.report.mode] || context.report.mode,
+    REPORT_TYPE_LABEL: getReportTypeLabelLocalized(context.report.type, context.report.language),
+    REPORT_TYPE_UI_LABEL: context.report.typeLabel || getReportTypeUiLabel(context.report.type),
+    LANGUAGE_INSTRUCTION: languageInstruction[context.report.language] || languageInstruction.english,
+    DEPTH_REQUIREMENT: paragraphsByDepth[context.report.depth] || paragraphsByDepth.medium,
+    TONE: typeProfile.tone,
+    MODE_TONE: modeTone[context.report.mode] || modeTone.professional,
+    OBJECTIVE: typeProfile.objective,
+    EMPHASIS: typeProfile.emphasis,
+    JSON_SCHEMA: JSON.stringify({
       title: 'string',
       executiveSummary: 'string',
       abstract: 'string',
@@ -1680,9 +1729,8 @@ function buildPromptBundle(context) {
       }],
       appendixSuggestions: ['string'],
     }, null, 2),
-    'Project context:',
-    JSON.stringify(contextForModel, null, 2),
-  ].join('\n\n');
+    PROJECT_CONTEXT_JSON: JSON.stringify(contextForModel, null, 2),
+  });
 
   return { systemPrompt, userPrompt };
 }
@@ -2155,7 +2203,8 @@ const SERVICE_04_MODEL_OVERRIDES = {
 };
 
 async function synthesizeReport(context) {
-  const { systemPrompt, userPrompt } = buildPromptBundle(context);
+  const promptConfig = buildService4PromptConfig(context.promptConfig || {});
+  const { systemPrompt, userPrompt } = buildPromptBundle(context, promptConfig);
   const result = await generateStructuredJson({
     aiModel: context.report.aiModel,
     systemPrompt,
@@ -2178,6 +2227,7 @@ async function synthesizeReport(context) {
     provider: result.provider,
     model: result.model,
     report: ensureReportShape(result.json, context),
+    prompts: { systemPrompt, userPrompt },
     warnings: [],
   };
 }
@@ -2776,6 +2826,26 @@ router.get('/jobs', (req, res) => {
   }
 });
 
+router.get('/prompt-config', (_req, res) => {
+  res.json({
+    success: true,
+    defaults: buildService4PromptConfig(),
+    placeholders: [
+      '[REPORT_MODE_LABEL]',
+      '[REPORT_TYPE_LABEL]',
+      '[REPORT_TYPE_UI_LABEL]',
+      '[LANGUAGE_INSTRUCTION]',
+      '[DEPTH_REQUIREMENT]',
+      '[TONE]',
+      '[MODE_TONE]',
+      '[OBJECTIVE]',
+      '[EMPHASIS]',
+      '[JSON_SCHEMA]',
+      '[PROJECT_CONTEXT_JSON]',
+    ],
+  });
+});
+
 router.post('/generate', (req, res, next) => {
   upload.any()(req, res, error => {
     if (error) return res.status(400).json({ error: error.message });
@@ -2828,6 +2898,11 @@ router.post('/generate', (req, res, next) => {
 
     const dedupedJobs = dedupeByJobId(linkedJobs);
     const context = buildModelContext(req.body || {}, dedupedJobs, uploadedFilesSummary);
+    try {
+      context.promptConfig = parseService4PromptConfig(req.body?.promptConfig);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
     const synthesis = await synthesizeReport(context);
     const report = synthesis.report;
     const exportContext = localizedContextView(context);
@@ -2865,6 +2940,8 @@ router.post('/generate', (req, res, next) => {
         aiModel: context.report.aiModelLabel,
         aiModelKey: context.report.aiModel,
       },
+      promptConfig: context.promptConfig,
+      prompts: synthesis.prompts,
       project: exportContext.project,
       linkedJobs: dedupedJobs.map(job => ({
         jobId: job.jobId,
